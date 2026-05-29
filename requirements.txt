@@ -1,0 +1,5 @@
+pycbc
+numpy
+scipy
+h5py
+openai
