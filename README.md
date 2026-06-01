@@ -1,6 +1,6 @@
 # GW Merger Bench
 
-A Stargazer-style interactive benchmark environment for evaluating AI agents on gravitational-wave parameter estimation. Agents analyse synthetic binary black hole (BBH) strain data from LIGO-style detectors, recover physical parameters, and are graded on a conjunction gate that separates statistical fit quality from physical correctness.
+An interactive benchmark environment for evaluating AI agents on gravitational-wave parameter estimation. Agents analyse synthetic binary black hole (BBH) strain data from LIGO-style detectors, recover physical parameters, and are graded on a conjunction gate that separates statistical fit quality from physical correctness.
 
 ---
 
