@@ -373,15 +373,15 @@ class GWEnvironment:
     def _build_initial_obs(self) -> Dict[str, Any]:
         return {
             "task_id":          self.task_meta["task_id"],
-            "tier":             self.task_meta["tier"],
-            "difficulty_score": self.task_meta["difficulty_score"],
+            # "tier":             self.task_meta["tier"],
+            # "difficulty_score": self.task_meta["difficulty_score"],
             "task_description": self.task_meta["description"],
             "sample_rate_hz":   self.task_meta["sample_rate"],
             "segment_duration_s": self.task_meta["segment_duration"],
             "f_lower_hz":       self.task_meta["f_lower"],
             "detectors":        self.task_meta["detectors"],
             "approximant_hint": self.task_meta["approximant_hint"],
-            "approximant": self.ground_truth.get("approximant", "IMRPhenomD"),
+            # "approximant": self.ground_truth.get("approximant", "IMRPhenomD"),
             "submission_format": self.task_meta["submission_format"],
             "data_paths": {
                 "strain_H1":  os.path.join(self.task_dir, "strain_H1.npy"),

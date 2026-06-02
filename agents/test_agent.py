@@ -335,7 +335,6 @@ class TestAgent:
         return f"""You have a new gravitational-wave analysis task.
 
 **Task ID**: {obs['task_id']}
-**Tier**: {obs['tier']}  |  **Difficulty score**: {obs['difficulty_score']}
 
 **Task**: {obs['task_description']}
 

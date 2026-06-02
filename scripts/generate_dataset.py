@@ -49,7 +49,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DIFFICULTY_CONFIG = {
     "easy": {
-        "n_tasks": 20,
+        "n_tasks": 100,
         # SNR range: clearly detectable
         "network_snr_range": (20.0, 35.0),
         # Total mass: intermediate — signal is short but clearly visible
@@ -65,7 +65,7 @@ DIFFICULTY_CONFIG = {
         "difficulty_score_range": (1, 3),
     },
     "medium": {
-        "n_tasks": 20,
+        "n_tasks": 100,
         "network_snr_range": (12.0, 20.0),
         "total_mass_range": (25.0, 120.0),
         "mass_ratio_range": (0.4, 0.9),
@@ -75,7 +75,7 @@ DIFFICULTY_CONFIG = {
         "difficulty_score_range": (4, 7),
     },
     "hard": {
-        "n_tasks": 20,
+        "n_tasks": 100,
         "network_snr_range": (8.0, 12.0),
         "total_mass_range": (10.0, 200.0),
         "mass_ratio_range": (0.1, 0.6),
