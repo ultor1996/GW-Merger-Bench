@@ -82,6 +82,9 @@ class EvaluationResult:
     anchor_chirp_mass_from_freq_evo: float = 0.0
     anchor_peak_freq_hz: float = 0.0
 
+    # Diagnostic: waveform matched but chirp mass wrong
+    stat_pass_phys_fail: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
@@ -200,6 +203,7 @@ class GWEvaluator:
             n_criteria_total=4,
             anchor_chirp_mass_from_freq_evo=self.anchor_chirp_mass,
             anchor_peak_freq_hz=self.anchor_peak_freq,
+            stat_pass_phys_fail=ok_waveform and not ok_chirp_mass,
         )
 
     # ------------------------------------------------------------------

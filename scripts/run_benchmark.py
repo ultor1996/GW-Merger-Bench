@@ -10,6 +10,7 @@ Usage:
   python scripts/run_benchmark.py \
       --pipeline-path /path/to/your/pipeline \
       --pipeline-entry run_gw_benchmark.py \
+      --data-dir data/IMRPhenomD \
       --tier easy \
       --outfile results/my_run.json
 """
@@ -33,19 +34,11 @@ from evaluation.evaluator import GWEvaluator
 # Constants
 # ---------------------------------------------------------------------------
 BLANK_SUBMISSION = {
-    "chirp_mass_Msun": 0.0,
-    "mass1_Msun":      0.0,
-    "mass2_Msun":      0.0,
-    "mass_ratio":      0.5,
-    "spin1z":          0.0,
-    "spin2z":          0.0,
-    "distance_Mpc":    500.0,
-    "inclination_rad": 0.4,
-    "ra_rad":          1.5,
-    "dec_rad":         -0.3,
-    "network_snr":     0.0,
-    "merger_type":     "BBH",
-    "confidence":      0.0,
+    "chirp_mass_Msun": 0.0,  "mass1_Msun": 0.0,  "mass2_Msun": 0.0,
+    "mass_ratio":      0.5,  "spin1z":     0.0,  "spin2z":     0.0,
+    "distance_Mpc":  500.0,  "inclination_rad": 0.4,
+    "ra_rad":          1.5,  "dec_rad":   -0.3,
+    "network_snr":     0.0,  "merger_type": "BBH", "confidence": 0.0,
 }
 
 REQUIRED_KEYS = {
@@ -56,25 +49,15 @@ REQUIRED_KEYS = {
 
 
 # ---------------------------------------------------------------------------
-# Pipeline runner — calls your agent as a subprocess
+# Pipeline runner
 # ---------------------------------------------------------------------------
-def run_pipeline(
-    pipeline_path: str,
-    pipeline_entry: str,
-    task_json: dict,
-    task_dir: str,
-    timeout: int,
-    verbose: bool,
-) -> dict:
-    """
-    Write input.json, call the pipeline, read output.json.
-    Returns the parsed submission dict (or BLANK_SUBMISSION on failure).
-    """
+def run_pipeline(pipeline_path, pipeline_entry, task_json,
+                 task_dir, timeout, verbose) -> dict:
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path  = os.path.join(tmpdir, "input.json")
         output_path = os.path.join(tmpdir, "output.json")
 
-        # Build input.json — no tier, no difficulty_score
+        # No tier or difficulty_score — agent sees only physics metadata
         pipeline_input = {
             "task_id":            task_json["task_id"],
             "task_description":   task_json["description"],
@@ -90,35 +73,31 @@ def run_pipeline(
                 "psd_freqs": os.path.join(task_dir, "psd_freqs.npy"),
                 "times":     os.path.join(task_dir, "times.npy"),
             },
-            "submission_format":  task_json.get("submission_format", {}),
-            "output_path":        output_path,
+            "submission_format": task_json.get("submission_format", {}),
+            "output_path":       output_path,
         }
 
         with open(input_path, "w") as f:
             json.dump(pipeline_input, f, indent=2)
 
         if verbose:
-            print(f"  [pipeline] input.json → {input_path}")
+            print(f"  [pipeline] input → {input_path}")
 
-        # Call pipeline
         entry = os.path.join(pipeline_path, pipeline_entry)
         cmd   = [sys.executable, entry, input_path]
 
         if verbose:
-            print(f"  [pipeline] running: {' '.join(cmd)}")
+            print(f"  [pipeline] cmd: {' '.join(cmd)}")
 
         try:
             proc = subprocess.run(
-                cmd,
-                cwd=pipeline_path,
-                capture_output=not verbose,
-                text=True,
-                timeout=timeout,
+                cmd, cwd=pipeline_path,
+                capture_output=not verbose, text=True, timeout=timeout,
             )
             if verbose and proc.stdout:
                 print(proc.stdout[:2000])
             if proc.returncode != 0:
-                print(f"  [pipeline] WARNING: exited with code {proc.returncode}")
+                print(f"  [pipeline] WARNING: exit code {proc.returncode}")
         except subprocess.TimeoutExpired:
             print(f"  [pipeline] TIMEOUT after {timeout}s")
             return BLANK_SUBMISSION.copy()
@@ -126,16 +105,13 @@ def run_pipeline(
             print(f"  [pipeline] ERROR: {e}")
             return BLANK_SUBMISSION.copy()
 
-        # Read and validate output.json
         return _parse_output(output_path)
 
 
 def _parse_output(output_path: str) -> dict:
-    """Read output.json and validate. Falls back to BLANK_SUBMISSION."""
     if not os.path.exists(output_path):
-        print(f"  [pipeline] WARNING: output.json not found — blank submission")
+        print("  [pipeline] WARNING: output.json not found — blank submission")
         return BLANK_SUBMISSION.copy()
-
     try:
         with open(output_path) as f:
             output = json.load(f)
@@ -143,14 +119,12 @@ def _parse_output(output_path: str) -> dict:
         print(f"  [pipeline] WARNING: invalid JSON: {e} — blank submission")
         return BLANK_SUBMISSION.copy()
 
-    # Fill missing keys
     missing = REQUIRED_KEYS - set(output.keys())
     if missing:
         print(f"  [pipeline] WARNING: missing keys {missing} — using defaults")
         for key in missing:
             output[key] = BLANK_SUBMISSION[key]
 
-    # Type-safe conversion
     try:
         return {
             "chirp_mass_Msun": float(output["chirp_mass_Msun"]),
@@ -197,7 +171,6 @@ def run_benchmark(args):
     tiers = ["easy", "medium", "hard"] if args.tier == "all" else [args.tier]
     tasks = load_tasks(args.data_dir, tiers, args.max_tasks)
 
-    # Timestamped results directory
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     tier_str  = "all" if len(tiers) > 1 else tiers[0]
     run_dir   = os.path.join("results", f"{tier_str}_{timestamp}")
@@ -205,9 +178,10 @@ def run_benchmark(args):
 
     print(f"\n{'='*60}")
     print(f"  GW Merger Bench")
-    print(f"  Pipeline:  {args.pipeline_entry}")
-    print(f"  Tier(s):   {tiers}  |  Tasks: {len(tasks)}")
-    print(f"  Run dir:   {run_dir}")
+    print(f"  Pipeline : {args.pipeline_entry}")
+    print(f"  Data dir : {args.data_dir}")
+    print(f"  Tier(s)  : {tiers}  |  Tasks: {len(tasks)}")
+    print(f"  Run dir  : {run_dir}")
     print(f"{'='*60}\n")
 
     task_results = []
@@ -215,9 +189,10 @@ def run_benchmark(args):
     for i, task_entry in enumerate(tasks, 1):
         task_id  = task_entry["task_id"]
         tier     = task_entry["tier"]
-        task_dir = os.path.join(args.data_dir, task_entry["path"])
+        # path in index is relative to the base data dir (e.g. "IMRPhenomD/001")
+        task_dir = os.path.join(args.data_dir, "..", task_entry["path"])
+        task_dir = os.path.normpath(task_dir)
 
-        # Load task.json (public) and ground_truth.json (hidden from agent)
         with open(os.path.join(task_dir, "task.json")) as f:
             task_json = json.load(f)
         with open(os.path.join(task_dir, "ground_truth.json")) as f:
@@ -225,7 +200,6 @@ def run_benchmark(args):
 
         t0 = time.time()
 
-        # Run pipeline — agent never sees ground_truth
         submission = run_pipeline(
             pipeline_path=args.pipeline_path,
             pipeline_entry=args.pipeline_entry,
@@ -235,7 +209,6 @@ def run_benchmark(args):
             verbose=args.verbose,
         )
 
-        # Evaluate submission against ground truth
         evaluator = GWEvaluator(ground_truth, task_dir=task_dir)
         result    = evaluator.evaluate(submission)
         metrics   = result.to_dict()
@@ -244,10 +217,8 @@ def run_benchmark(args):
         passed  = metrics["passed"]
         n_crit  = metrics["n_criteria_passed"]
 
-        print(f"[{i:03d}/{len(tasks)}] {task_id:35s} tier={tier:6s} "
-              f"{'PASS' if passed else 'FAIL'}  "
-              f"crit={n_crit}/4  "
-              f"t={elapsed}s")
+        print(f"[{i:03d}/{len(tasks)}] {task_id:10s} tier={tier:6s} "
+              f"{'PASS' if passed else 'FAIL'}  crit={n_crit}/4  t={elapsed}s")
 
         task_result = {
             "task_id":    task_id,
@@ -259,17 +230,15 @@ def run_benchmark(args):
         }
         task_results.append(task_result)
 
-        # Save per-task JSON immediately
         with open(os.path.join(run_dir, f"{task_id}.json"), "w") as f:
             json.dump(task_result, f, indent=2)
 
-    # Aggregate + print summary
     stats = _aggregate(task_results)
     _print_summary(stats)
 
-    # Save full run report
     run_report = {
         "run_dir":      run_dir,
+        "data_dir":     args.data_dir,
         "pipeline":     args.pipeline_entry,
         "tiers":        tiers,
         "timestamp":    timestamp,
@@ -292,20 +261,18 @@ def run_benchmark(args):
 
 
 # ---------------------------------------------------------------------------
-# Aggregation + display
+# Aggregation
 # ---------------------------------------------------------------------------
 def _aggregate(task_results: list) -> dict:
     from collections import defaultdict
     by_tier = defaultdict(list)
     for r in task_results:
         by_tier[r["tier"]].append(r)
-
     stats = {}
     for tier in ["easy", "medium", "hard"]:
         rs = by_tier.get(tier, [])
         if rs:
             stats[tier] = _tier_stats(rs)
-
     stats["overall"] = _tier_stats(task_results)
     return stats
 
@@ -348,25 +315,19 @@ def _print_summary(stats: dict):
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(
-        description="GW Merger Bench — external pipeline evaluation",
+        description="GW Merger Bench",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--pipeline-path",    required=True,
-                   help="Absolute path to your agent pipeline repo root")
-    p.add_argument("--pipeline-entry",   default="run_gw_benchmark.py",
-                   help="Entry point script relative to --pipeline-path")
-    p.add_argument("--pipeline-timeout", type=int, default=300,
-                   help="Seconds before pipeline is killed per task")
+    p.add_argument("--pipeline-path",    required=True)
+    p.add_argument("--pipeline-entry",   default="run_gw_benchmark.py")
+    p.add_argument("--pipeline-timeout", type=int, default=300)
     p.add_argument("--tier",    default="all",
                    choices=["easy", "medium", "hard", "all"])
-    p.add_argument("--max-tasks", type=int, default=None,
-                   help="Limit total tasks — useful for quick testing")
-    p.add_argument("--data-dir",  default="data/synthetic",
-                   help="Path to dataset directory")
-    p.add_argument("--outfile",   default=None,
-                   help="Also save full report to this path")
-    p.add_argument("--verbose",   action="store_true",
-                   help="Print pipeline stdout and full submission details")
+    p.add_argument("--max-tasks", type=int, default=None)
+    p.add_argument("--data-dir",  default="data/IMRPhenomD",
+                   help="Path to approximant subfolder, e.g. data/IMRPhenomD")
+    p.add_argument("--outfile",   default=None)
+    p.add_argument("--verbose",   action="store_true")
     args = p.parse_args()
     run_benchmark(args)
 
