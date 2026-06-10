@@ -374,12 +374,3 @@ python scripts/run_benchmark.py \
     --data-dir data/seobnrv4 \
     --tier easy
 ```
-
----
-
-## Every Time You Return
-
-```bash
-cd ~/Desktop/code/GW_merger_bench
-source venv/bin/activate
-```
