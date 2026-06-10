@@ -4,18 +4,6 @@ A benchmark for evaluating AI agents on gravitational-wave parameter estimation.
 
 ---
 
-## Design Philosophy
-
-**Bare-bones and agent-agnostic.** The benchmark does three things only:
-
-1. Generates synthetic GW tasks (data + hidden ground truth)
-2. Calls your agent pipeline once per task and reads its output
-3. Evaluates the output and saves a JSON report
-
-There is no turn loop, no feedback to the agent, no system prompt, and no difficulty hints passed to the agent. The benchmark is a black-box evaluator — your agent harness is entirely responsible for its own prompts, tools, and internal logic.
-
----
-
 ## What Each Task Gives the Agent
 
 Each task provides:
@@ -23,15 +11,6 @@ Each task provides:
 - A 16-second strain time series from two detectors (H1 and L1) as `.npy` files
 - The detector noise PSD as `.npy` files
 - A `task.json` with physics metadata (sample rate, f_lower, approximant, segment duration)
-
-**What is NOT given to the agent:**
-
-- Difficulty tier (easy / medium / hard)
-- Difficulty score
-- True parameter values
-- Feedback of any kind
-
-Tier and difficulty score are stored only in `ground_truth.json`, which is never passed to the agent.
 
 ---
 
@@ -386,12 +365,3 @@ python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomXHM
 ```
 
 Each generates `data/IMRPhenomD/`, `data/SEOBNRv4/`, `data/IMRPhenomXHM/` with the same physical events but different waveform templates — useful for testing agent robustness across approximants.
-
----
-
-## Every Time You Return
-
-```bash
-cd ~/Desktop/code/GW_merger_bench
-source venv/bin/activate
-```
