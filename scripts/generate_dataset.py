@@ -4,14 +4,18 @@ Generates 60 synthetic BBH injection tasks (20 easy / 20 medium / 20 hard)
 mirroring Stargazer's synthetic task generation philosophy.
 
 Each task is saved as:
-  data/synthetic/{tier}/{task_id}/
+  data/synthetic/{task_id}/
       strain_H1.npy       — detector strain time series (H1)
       strain_L1.npy       — detector strain time series (L1)
       psd_H1.npy          — noise PSD used (H1)
       psd_L1.npy          — noise PSD used (L1)
+      psd_freqs.npy       — PSD frequency axis
       times.npy           — GPS-relative time array
-      task.json           — task metadata (public, no true params)
-      ground_truth.json   — true parameters (hidden from agent)
+      task.json           — task metadata (public, no true params, no tier)
+      ground_truth.json   — true parameters + tier (hidden from agent)
+
+All tasks live in one flat parent folder — no easy/medium/hard subfolders.
+Tier is stored only in ground_truth.json.
 
 Usage:
   python scripts/generate_dataset.py
@@ -32,7 +36,6 @@ from typing import Tuple
 try:
     from pycbc.waveform import get_td_waveform
     from pycbc.detector import Detector
-    from pycbc.noise import noise_from_string
     from pycbc.psd import aLIGOZeroDetHighPower
     from pycbc.filter import matched_filter, sigma
     from pycbc.types import TimeSeries, FrequencySeries
@@ -137,10 +140,8 @@ class TrueParams:
 
 @dataclass
 class TaskMetadata:
-    """Public task description given to the agent."""
+    """Public task description given to the agent. No tier or difficulty."""
     task_id: str
-    tier: str
-    difficulty_score: int
     description: str
     sample_rate: int
     segment_duration: float
@@ -173,6 +174,21 @@ def chirp_mass_from_dfdt(f: float, dfdt: float) -> float:
     G_over_c3 = 4.925491025543576e-06  # seconds per solar mass
     Mchirp_s = (5.0 / 96.0 * np.pi ** (-8.0 / 3.0) * f ** (-11.0 / 3.0) * dfdt) ** (3.0 / 5.0)
     return Mchirp_s / G_over_c3
+
+
+def _colored_noise(psd_vals, psd_freqs, n_samples, sample_rate, seed):
+    """Generate colored Gaussian noise from a PSD using numpy only."""
+    rng_n      = np.random.default_rng(seed)
+    flen       = n_samples // 2 + 1
+    freqs      = np.fft.rfftfreq(n_samples, d=1.0 / sample_rate)
+    psd_interp = np.interp(freqs, psd_freqs, psd_vals, left=1e-40, right=1e-40)
+    psd_interp = np.where(psd_interp > 0, psd_interp, 1e-40)
+    sigma_f    = np.sqrt(psd_interp * sample_rate / 2)
+    noise_f    = (rng_n.standard_normal(flen) +
+                  1j * rng_n.standard_normal(flen)) * sigma_f
+    noise_f[0]  = noise_f[0].real
+    noise_f[-1] = noise_f[-1].real
+    return np.fft.irfft(noise_f, n=n_samples).astype(np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -290,24 +306,20 @@ def generate_one_event(
     opt_snr_L1 = opt_snr_L1_100 * scale
     network_snr = np.sqrt(opt_snr_H1 ** 2 + opt_snr_L1 ** 2)
 
-    # --- Generate Gaussian noise and inject ---
-    noise_H1 = noise_from_string(
-        "aLIGOZeroDetHighPower",
-        length=n_samples,
-        delta_t=dt,
-        low_frequency_cutoff=F_LOWER,
+    # --- Build PSD arrays (must happen before noise generation) ---
+    psd_freqs_arr = np.linspace(0, SAMPLE_RATE / 2, flen)
+    psd_vals_H1   = np.array(psd_H1)
+    psd_vals_L1   = np.array(psd_L1)
+
+    # --- Generate colored Gaussian noise and inject signal ---
+    noise_arr_H1 = _colored_noise(
+        psd_vals_H1, psd_freqs_arr, n_samples, SAMPLE_RATE,
         seed=abs(hash(task_id + "H1")) % (2 ** 31),
     )
-    noise_L1 = noise_from_string(
-        "aLIGOZeroDetHighPower",
-        length=n_samples,
-        delta_t=dt,
-        low_frequency_cutoff=F_LOWER,
+    noise_arr_L1 = _colored_noise(
+        psd_vals_L1, psd_freqs_arr, n_samples, SAMPLE_RATE,
         seed=abs(hash(task_id + "L1")) % (2 ** 31),
     )
-
-    noise_arr_H1 = np.array(noise_H1)[:n_samples]
-    noise_arr_L1 = np.array(noise_L1)[:n_samples]
 
     strain_H1 = noise_arr_H1 + sig_H1
     strain_L1 = noise_arr_L1 + sig_L1
@@ -362,15 +374,12 @@ def generate_one_event(
 
     task_meta = TaskMetadata(
         task_id=task_id,
-        tier=tier,
-        difficulty_score=diff_score,
         description=(
             f"A gravitational-wave strain signal has been recorded by the H1 and L1 detectors. "
             f"The segment is {SEGMENT_DURATION}s long at {SAMPLE_RATE} Hz. "
             f"Your task is to detect the signal, estimate the chirp mass, component masses, "
             f"mass ratio, spins, distance, and sky location, and classify the merger type. "
-            f"Submit your estimates using the submit_action tool. "
-            f"You may revise your submission based on evaluator feedback."
+            f"Submit your parameter estimates."
         ),
         sample_rate=SAMPLE_RATE,
         segment_duration=SEGMENT_DURATION,
@@ -395,17 +404,14 @@ def generate_one_event(
     )
 
     times = np.linspace(0, SEGMENT_DURATION, n_samples, endpoint=False)
-    psd_freqs = np.linspace(0, SAMPLE_RATE / 2, flen)
-    psd_vals_H1 = np.array(psd_H1)
-    psd_vals_L1 = np.array(psd_L1)
 
     arrays = {
         "strain_H1": strain_H1,
         "strain_L1": strain_L1,
-        "psd_H1": psd_vals_H1,
-        "psd_L1": psd_vals_L1,
-        "psd_freqs": psd_freqs,
-        "times": times,
+        "psd_H1":    psd_vals_H1,
+        "psd_L1":    psd_vals_L1,
+        "psd_freqs": psd_freqs_arr,
+        "times":     times,
     }
 
     return true_params, task_meta, arrays
@@ -415,7 +421,8 @@ def generate_one_event(
 # Save one task to disk
 # ---------------------------------------------------------------------------
 def save_task(outdir: str, true_params: TrueParams, task_meta: TaskMetadata, arrays: dict):
-    task_dir = os.path.join(outdir, task_meta.tier, task_meta.task_id)
+    # Flat structure — all tasks directly under outdir, no tier subfolders
+    task_dir = os.path.join(outdir, task_meta.task_id)
     os.makedirs(task_dir, exist_ok=True)
 
     # Public files
@@ -444,24 +451,21 @@ def save_task(outdir: str, true_params: TrueParams, task_meta: TaskMetadata, arr
 # ---------------------------------------------------------------------------
 def build_index(outdir: str):
     index = {"tasks": []}
-    for tier in ["easy", "medium", "hard"]:
-        tier_dir = os.path.join(outdir, tier)
-        if not os.path.isdir(tier_dir):
+    for task_id in sorted(os.listdir(outdir)):
+        task_dir  = os.path.join(outdir, task_id)
+        meta_path = os.path.join(task_dir, "task.json")
+        gt_path   = os.path.join(task_dir, "ground_truth.json")
+        if not os.path.isdir(task_dir) or not os.path.exists(meta_path):
             continue
-        for task_id in sorted(os.listdir(tier_dir)):
-            meta_path = os.path.join(tier_dir, task_id, "task.json")
-            gt_path = os.path.join(tier_dir, task_id, "ground_truth.json")
-            if not os.path.exists(meta_path):
-                continue
-            with open(meta_path) as f:
-                meta = json.load(f)
-            entry = {
-                "task_id": task_id,
-                "tier": tier,
-                "difficulty_score": meta["difficulty_score"],
-                "path": os.path.join(tier, task_id),
-            }
-            index["tasks"].append(entry)
+        # Read tier from ground_truth only
+        with open(gt_path) as f:
+            gt = json.load(f)
+        entry = {
+            "task_id": task_id,
+            "tier":    gt["tier"],
+            "path":    task_id,   # flat — path is just the task_id folder
+        }
+        index["tasks"].append(entry)
 
     index["total"] = len(index["tasks"])
     index["by_tier"] = {
@@ -487,7 +491,7 @@ def main():
     parser.add_argument("--approximant", type=str, default="IMRPhenomD",
                         choices=["IMRPhenomD", "SEOBNRv4", "IMRPhenomXHM"],
                         help="Waveform approximant used to generate data")
-    parser.add_argument("--outdir", type=str, default="data/synthetic",
+    parser.add_argument("--outdir", type=str, default="data/",
                         help="Output directory")
     args = parser.parse_args()
 
@@ -509,7 +513,7 @@ def main():
     for tier, cfg in DIFFICULTY_CONFIG.items():
         print(f"\n--- Generating {cfg['n_tasks']} {tier.upper()} tasks ---")
         for i in range(cfg["n_tasks"]):
-            task_id = f"synthetic_{tier}_{i+1:03d}"
+            task_id = f"{task_counter:03d}"
             try:
                 true_params, task_meta, arrays = generate_one_event(
                     task_id=task_id,
