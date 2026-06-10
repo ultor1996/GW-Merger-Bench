@@ -2,20 +2,6 @@
 
 A benchmark for evaluating AI agents on gravitational-wave parameter estimation. Agents analyse synthetic binary black hole (BBH) strain data from LIGO-style detectors and recover physical parameters. The benchmark grades the final submission on a conjunction gate that separates statistical fit quality from physical correctness.
 
----
-
-## Design Philosophy
-
-**Bare-bones and agent-agnostic.** The benchmark does three things only:
-
-1. Generates synthetic GW tasks (data + hidden ground truth)
-2. Calls your agent pipeline once per task and reads its output
-3. Evaluates the output and saves a JSON report
-
-There is no turn loop, no feedback to the agent, no system prompt, and no difficulty hints passed to the agent. The benchmark is a black-box evaluator — your agent harness is entirely responsible for its own prompts, tools, and internal logic.
-
----
-
 ## What Each Task Gives the Agent
 
 Each task provides:
@@ -24,16 +10,6 @@ Each task provides:
 - The detector noise PSD as `.npy` files
 - A `task.json` with physics metadata (sample rate, f_lower, approximant, segment duration)
 
-**What is NOT given to the agent:**
-
-- Difficulty tier (easy / medium / hard)
-- Difficulty score
-- True parameter values
-- Feedback of any kind
-
-Tier and difficulty score are stored only in `ground_truth.json`, which is never passed to the agent.
-
----
 
 ## Evaluation Criteria
 
@@ -171,7 +147,7 @@ No `tier`, no `difficulty_score` — the agent receives only physics metadata.
 
 ```json
 {
-    "task_id":          "synthetic_easy_001",
+    "task_id":          "001",
     "tier":             "easy",
     "difficulty_score": 2,
     "chirp_mass":       28.04,
@@ -208,7 +184,7 @@ saves per-task JSON + run_summary.json
 
 ```json
 {
-    "task_id":            "synthetic_easy_001",
+    "task_id":            "001",
     "task_description":   "...",
     "approximant":        "IMRPhenomD",
     "sample_rate_hz":     2048,
@@ -296,15 +272,15 @@ python scripts/run_benchmark.py \
 ### Live output per task
 
 ```
-[001/300] synthetic_easy_001   tier=easy   PASS  crit=4/4  t=18.4s
-[002/300] synthetic_easy_002   tier=easy   FAIL  crit=2/4  t=21.1s
+[001/300] 001   tier=easy   PASS  crit=4/4  t=18.4s
+[002/300] 002   tier=easy   FAIL  crit=2/4  t=21.1s
 ```
 
 ### Per-task JSON (saved immediately after each task)
 
 ```json
 {
-  "task_id":    "synthetic_easy_001",
+  "task_id":    "001",
   "tier":       "easy",
   "passed":     true,
   "elapsed_s":  18.4,
