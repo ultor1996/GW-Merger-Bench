@@ -50,7 +50,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DIFFICULTY_CONFIG = {
     "easy": {
-        "n_tasks":               100,
+        "n_tasks":               5,
         "network_snr_range":     (20.0, 35.0),
         "total_mass_range":      (40.0, 80.0),
         "mass_ratio_range":      (0.7, 1.0),
@@ -59,7 +59,7 @@ DIFFICULTY_CONFIG = {
         "difficulty_score_range":(1, 3),
     },
     "medium": {
-        "n_tasks":               100,
+        "n_tasks":               5,
         "network_snr_range":     (12.0, 20.0),
         "total_mass_range":      (25.0, 120.0),
         "mass_ratio_range":      (0.4, 0.9),
@@ -68,7 +68,7 @@ DIFFICULTY_CONFIG = {
         "difficulty_score_range":(4, 7),
     },
     "hard": {
-        "n_tasks":               100,
+        "n_tasks":               5,
         "network_snr_range":     (8.0, 12.0),
         "total_mass_range":      (10.0, 200.0),
         "mass_ratio_range":      (0.1, 0.6),
@@ -306,15 +306,8 @@ def generate_one_event(
             "mass1_Msun":      "float",
             "mass2_Msun":      "float",
             "mass_ratio":      "float — m2/m1, in (0,1]",
-            "spin1z":          "float — dimensionless [-1, 1]",
-            "spin2z":          "float — dimensionless [-1, 1]",
-            "distance_Mpc":    "float",
-            "inclination_rad": "float",
-            "ra_rad":          "float",
-            "dec_rad":         "float",
             "network_snr":     "float — your estimated SNR",
             "merger_type":     "str — one of BBH / BNS / NSBH",
-            "confidence":      "float — your confidence in [0, 1]",
         },
     )
 

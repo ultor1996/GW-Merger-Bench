@@ -9,7 +9,7 @@ No turn loop. No feedback to the agent. Single-shot evaluation only.
 Usage:
   python scripts/run_benchmark.py \
       --pipeline-path /path/to/your/pipeline \
-      --pipeline-entry run_gw_benchmark.py \
+      --pipeline-entry run.py \
       --data-dir data/IMRPhenomD \
       --tier easy \
       --outfile results/my_run.json
@@ -31,20 +31,20 @@ from evaluation.evaluator import GWEvaluator
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — only the 6 recoverable parameters
 # ---------------------------------------------------------------------------
 BLANK_SUBMISSION = {
-    "chirp_mass_Msun": 0.0,  "mass1_Msun": 0.0,  "mass2_Msun": 0.0,
-    "mass_ratio":      0.5,  "spin1z":     0.0,  "spin2z":     0.0,
-    "distance_Mpc":  500.0,  "inclination_rad": 0.4,
-    "ra_rad":          1.5,  "dec_rad":   -0.3,
-    "network_snr":     0.0,  "merger_type": "BBH", "confidence": 0.0,
+    "chirp_mass_Msun": 0.0,
+    "mass1_Msun":      0.0,
+    "mass2_Msun":      0.0,
+    "mass_ratio":      0.5,
+    "network_snr":     0.0,
+    "merger_type":     "BBH",
 }
 
 REQUIRED_KEYS = {
-    "chirp_mass_Msun", "mass1_Msun", "mass2_Msun", "mass_ratio",
-    "spin1z", "spin2z", "distance_Mpc", "inclination_rad",
-    "ra_rad", "dec_rad", "network_snr", "merger_type", "confidence",
+    "chirp_mass_Msun", "mass1_Msun", "mass2_Msun",
+    "mass_ratio", "network_snr", "merger_type",
 }
 
 
@@ -57,7 +57,6 @@ def run_pipeline(pipeline_path, pipeline_entry, task_json,
         input_path  = os.path.join(tmpdir, "input.json")
         output_path = os.path.join(tmpdir, "output.json")
 
-        # No tier or difficulty_score — agent sees only physics metadata
         pipeline_input = {
             "task_id":            task_json["task_id"],
             "task_description":   task_json["description"],
@@ -66,12 +65,12 @@ def run_pipeline(pipeline_path, pipeline_entry, task_json,
             "segment_duration_s": task_json["segment_duration"],
             "f_lower_hz":         task_json["f_lower"],
             "data_paths": {
-                "strain_H1": os.path.join(task_dir, "strain_H1.npy"),
-                "strain_L1": os.path.join(task_dir, "strain_L1.npy"),
-                "psd_H1":    os.path.join(task_dir, "psd_H1.npy"),
-                "psd_L1":    os.path.join(task_dir, "psd_L1.npy"),
-                "psd_freqs": os.path.join(task_dir, "psd_freqs.npy"),
-                "times":     os.path.join(task_dir, "times.npy"),
+                "strain_H1": os.path.abspath(os.path.join(task_dir, "strain_H1.npy")),
+                "strain_L1": os.path.abspath(os.path.join(task_dir, "strain_L1.npy")),
+                "psd_H1":    os.path.abspath(os.path.join(task_dir, "psd_H1.npy")),
+                "psd_L1":    os.path.abspath(os.path.join(task_dir, "psd_L1.npy")),
+                "psd_freqs": os.path.abspath(os.path.join(task_dir, "psd_freqs.npy")),
+                "times":     os.path.abspath(os.path.join(task_dir, "times.npy")),
             },
             "submission_format": task_json.get("submission_format", {}),
             "output_path":       output_path,
@@ -83,8 +82,11 @@ def run_pipeline(pipeline_path, pipeline_entry, task_json,
         if verbose:
             print(f"  [pipeline] input → {input_path}")
 
-        entry = os.path.join(pipeline_path, pipeline_entry)
-        cmd   = [sys.executable, entry, input_path]
+        entry        = os.path.join(pipeline_path, pipeline_entry)
+        agent_python = os.path.join(pipeline_path, "venv", "bin", "python")
+        if not os.path.exists(agent_python):
+            agent_python = sys.executable
+        cmd = [agent_python, entry, input_path]
 
         if verbose:
             print(f"  [pipeline] cmd: {' '.join(cmd)}")
@@ -131,15 +133,8 @@ def _parse_output(output_path: str) -> dict:
             "mass1_Msun":      float(output["mass1_Msun"]),
             "mass2_Msun":      float(output["mass2_Msun"]),
             "mass_ratio":      float(output["mass_ratio"]),
-            "spin1z":          float(output["spin1z"]),
-            "spin2z":          float(output["spin2z"]),
-            "distance_Mpc":    float(output["distance_Mpc"]),
-            "inclination_rad": float(output["inclination_rad"]),
-            "ra_rad":          float(output["ra_rad"]),
-            "dec_rad":         float(output["dec_rad"]),
             "network_snr":     float(output["network_snr"]),
             "merger_type":     str(output["merger_type"]).strip().upper(),
-            "confidence":      float(output.get("confidence", 0.5)),
         }
     except (ValueError, TypeError) as e:
         print(f"  [pipeline] WARNING: type error {e} — blank submission")
@@ -189,9 +184,9 @@ def run_benchmark(args):
     for i, task_entry in enumerate(tasks, 1):
         task_id  = task_entry["task_id"]
         tier     = task_entry["tier"]
-        # path in index is relative to the base data dir (e.g. "IMRPhenomD/001")
-        task_dir = os.path.join(args.data_dir, "..", task_entry["path"])
-        task_dir = os.path.normpath(task_dir)
+        task_dir = os.path.normpath(
+            os.path.join(args.data_dir, "..", task_entry["path"])
+        )
 
         with open(os.path.join(task_dir, "task.json")) as f:
             task_json = json.load(f)
@@ -319,7 +314,7 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--pipeline-path",    required=True)
-    p.add_argument("--pipeline-entry",   default="run_gw_benchmark.py")
+    p.add_argument("--pipeline-entry",   default="run.py")
     p.add_argument("--pipeline-timeout", type=int, default=300)
     p.add_argument("--tier",    default="all",
                    choices=["easy", "medium", "hard", "all"])

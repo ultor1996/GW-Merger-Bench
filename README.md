@@ -4,6 +4,23 @@ A benchmark for evaluating AI agents on gravitational-wave parameter estimation.
 
 ---
 
+## What the Agent Submits
+
+The agent only submits the **6 parameters that are physically recoverable** from single-detector matched filtering:
+
+| Parameter | Description |
+|---|---|
+| `chirp_mass_Msun` | Chirp mass in solar masses |
+| `mass1_Msun` | Primary component mass |
+| `mass2_Msun` | Secondary component mass |
+| `mass_ratio` | q = m2/m1, range (0, 1] |
+| `network_snr` | Estimated SNR from matched filter |
+| `merger_type` | Exactly `"BBH"`, `"BNS"`, or `"NSBH"` |
+
+Parameters like spins, distance, sky location, and inclination are **not required** — they cannot be reliably recovered from single-detector matched filtering and are not evaluated.
+
+---
+
 ## What Each Task Gives the Agent
 
 Each task provides:
@@ -11,6 +28,15 @@ Each task provides:
 - A 16-second strain time series from two detectors (H1 and L1) as `.npy` files
 - The detector noise PSD as `.npy` files
 - A `task.json` with physics metadata (sample rate, f_lower, approximant, segment duration)
+
+**What is NOT given to the agent:**
+
+- Difficulty tier (easy / medium / hard)
+- Difficulty score
+- True parameter values
+- Feedback of any kind
+
+Tier and difficulty score are stored only in `ground_truth.json`, which is never passed to the agent.
 
 ---
 
@@ -27,16 +53,16 @@ A task **passes only if all four criteria pass simultaneously** (conjunction gat
 
 ### How `ok_waveform_match` works
 
-The evaluator computes this entirely independently — the agent cannot self-report it:
+The evaluator computes this entirely independently using the submitted masses and the **true extrinsic parameters** (distance, sky location, inclination, spins) from `ground_truth.json`. This means the overlap test purely measures whether the agent recovered the correct masses — it is not penalised for unknown extrinsic parameters.
 
 ```
-Agent submits: mass1=32, mass2=24, spin1z=0.1, distance=450, ra=1.2, dec=-0.5 ...
+Agent submits: chirp_mass=28.5, mass1=32, mass2=24, mass_ratio=0.75
                         ↓
-Evaluator reads approximant from ground_truth.json (e.g. IMRPhenomD)
+Evaluator reads true distance, ra, dec, inclination, spins from ground_truth.json
                         ↓
-Runs that approximant with submitted parameters → clean template h(t)
+Generates clean waveform template with submitted masses + true extrinsics
                         ↓
-Projects onto H1 detector using submitted sky location
+Projects onto H1 detector
                         ↓
 Tries 4 coalescence phases (0, π/2, π, 3π/2) — takes best overlap
                         ↓
@@ -75,12 +101,14 @@ GW_merger_bench/
 │   │   │   └── ground_truth.json   — hidden (tier, difficulty, true params)
 │   │   ├── 001/
 │   │   └── ...
-│   ├── SEOBNRv4/             ← separate subfolder per approximant
+│   ├── SEOBNRv4/
 │   └── IMRPhenomXHM/
 │
 └── results/
-    └── easy_2026-06-10_12-00-00/
+    └── easy_2026-06-11_12-00-00/
         ├── run_summary.json
+        ├── agent_logs/
+        │   └── 000_agent.log
         ├── 000.json
         └── ...
 ```
@@ -144,7 +172,14 @@ Generates **300 tasks** (100 easy / 100 medium / 100 hard) saved to `data/{appro
     "f_lower":          20.0,
     "detectors":        ["H1", "L1"],
     "approximant_hint": "IMRPhenomD",
-    "submission_format": { ... }
+    "submission_format": {
+        "chirp_mass_Msun": "float",
+        "mass1_Msun":      "float",
+        "mass2_Msun":      "float",
+        "mass_ratio":      "float — m2/m1, in (0,1]",
+        "network_snr":     "float — your estimated SNR",
+        "merger_type":     "str — one of BBH / BNS / NSBH"
+    }
 }
 ```
 
@@ -164,10 +199,12 @@ No `tier`, no `difficulty_score`.
     "spin1z":           0.05,
     "spin2z":          -0.02,
     "distance":         450.0,
+    "inclination":      0.3,
+    "ra":               1.5,
+    "dec":             -0.5,
     "network_snr":      24.3,
     "merger_type":      "BBH",
-    "approximant":      "IMRPhenomD",
-    ...
+    "approximant":      "IMRPhenomD"
 }
 ```
 
@@ -212,7 +249,7 @@ saves per-task JSON + run_summary.json
 
 ### What output.json must contain
 
-All 13 fields required:
+Only 6 fields required:
 
 ```json
 {
@@ -220,17 +257,12 @@ All 13 fields required:
     "mass1_Msun":      32.0,
     "mass2_Msun":      24.0,
     "mass_ratio":      0.75,
-    "spin1z":          0.1,
-    "spin2z":          0.05,
-    "distance_Mpc":    450.0,
-    "inclination_rad": 0.4,
-    "ra_rad":          1.2,
-    "dec_rad":         -0.5,
     "network_snr":     20.0,
-    "merger_type":     "BBH",
-    "confidence":      0.8
+    "merger_type":     "BBH"
 }
 ```
+
+Missing fields are filled with safe defaults. If the pipeline crashes or times out, a blank submission is recorded and the benchmark continues.
 
 ### Run commands
 
@@ -238,14 +270,14 @@ All 13 fields required:
 # 1 task — quick test
 python scripts/run_benchmark.py \
     --pipeline-path /path/to/your/pipeline \
-    --pipeline-entry run_gw_benchmark.py \
+    --pipeline-entry run.py \
     --data-dir data/IMRPhenomD \
     --tier easy --max-tasks 1 --verbose
 
 # Full easy tier
 python scripts/run_benchmark.py \
     --pipeline-path /path/to/your/pipeline \
-    --pipeline-entry run_gw_benchmark.py \
+    --pipeline-entry run.py \
     --data-dir data/IMRPhenomD \
     --tier easy \
     --outfile results/my_pipeline_easy.json
@@ -253,7 +285,7 @@ python scripts/run_benchmark.py \
 # All tiers
 python scripts/run_benchmark.py \
     --pipeline-path /path/to/your/pipeline \
-    --pipeline-entry run_gw_benchmark.py \
+    --pipeline-entry run.py \
     --data-dir data/IMRPhenomD \
     --tier all \
     --outfile results/my_pipeline_full.json
@@ -261,7 +293,7 @@ python scripts/run_benchmark.py \
 # Different approximant
 python scripts/run_benchmark.py \
     --pipeline-path /path/to/your/pipeline \
-    --pipeline-entry run_gw_benchmark.py \
+    --pipeline-entry run.py \
     --data-dir data/SEOBNRv4 \
     --tier easy
 ```
@@ -271,13 +303,13 @@ python scripts/run_benchmark.py \
 | Argument | Default | Description |
 |---|---|---|
 | `--pipeline-path` | required | Absolute path to your pipeline repo root |
-| `--pipeline-entry` | `run_gw_benchmark.py` | Entry point script relative to `--pipeline-path` |
+| `--pipeline-entry` | `run.py` | Entry point script relative to `--pipeline-path` |
 | `--pipeline-timeout` | `300` | Seconds before pipeline is killed per task |
 | `--tier` | `all` | `easy`, `medium`, `hard`, or `all` |
 | `--max-tasks` | None | Limit tasks — useful for quick testing |
 | `--data-dir` | `data/IMRPhenomD` | Path to approximant subfolder |
 | `--outfile` | None | Also save full report to this path |
-| `--verbose` | False | Print pipeline stdout and submission details |
+| `--verbose` | False | Print pipeline stdout and agent interaction |
 
 ---
 
@@ -286,8 +318,8 @@ python scripts/run_benchmark.py \
 ### Live output per task
 
 ```
-[001/300] 000        tier=easy   PASS  crit=4/4  t=18.4s
-[002/300] 001        tier=easy   FAIL  crit=2/4  t=21.1s
+[001/300] 000        tier=easy   PASS  crit=4/4  t=39.3s
+[002/300] 001        tier=easy   FAIL  crit=2/4  t=41.1s
 ```
 
 ### Per-task JSON (saved immediately after each task)
@@ -297,8 +329,15 @@ python scripts/run_benchmark.py \
   "task_id":    "000",
   "tier":       "easy",
   "passed":     true,
-  "elapsed_s":  18.4,
-  "submission": { ... },
+  "elapsed_s":  39.3,
+  "submission": {
+    "chirp_mass_Msun": 28.5,
+    "mass1_Msun":      32.0,
+    "mass2_Msun":      24.0,
+    "mass_ratio":      0.75,
+    "network_snr":     20.0,
+    "merger_type":     "BBH"
+  },
   "metrics": {
     "passed":                true,
     "n_criteria_passed":     4,
@@ -310,9 +349,9 @@ python scripts/run_benchmark.py \
     "chirp_mass_submitted":  28.5,
     "chirp_mass_true":       28.04,
     "chirp_mass_frac_err":   0.016,
-    "mass_ratio_submitted":  0.74,
+    "mass_ratio_submitted":  0.75,
     "mass_ratio_true":       0.71,
-    "mass_ratio_abs_err":    0.03,
+    "mass_ratio_abs_err":    0.04,
     "merger_type_submitted": "BBH",
     "merger_type_true":      "BBH",
     "stat_pass_phys_fail":   false
@@ -352,6 +391,21 @@ Tier is stored in `ground_truth.json` only — the agent never sees it:
 | `spin_magnitude_range` | 0–0.1 | 0–0.5 | 0.3–0.9 |
 | `inclination_range` (rad) | 0–0.3 | 0–1.0 | 0.5–π/2 |
 
+Lower SNR, more unequal masses, higher spins, and edge-on inclinations all make parameter recovery harder.
+
+---
+
+## Evaluation Thresholds
+
+```python
+# evaluation/evaluator.py
+OVERLAP_THRESHOLD   = 0.90   # waveform match threshold
+chirp_mass_tol_frac = 0.05   # 5% — baked into ground_truth.json at generation time
+mass_ratio_tol_abs  = 0.15   # absolute — baked into ground_truth.json at generation time
+```
+
+Changing `OVERLAP_THRESHOLD` takes effect immediately without regenerating data.
+
 ---
 
 ## Generating Multiple Approximant Datasets
@@ -364,4 +418,7 @@ python scripts/generate_dataset.py --seed 42 --approximant SEOBNRv4
 python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomXHM
 ```
 
-Each generates `data/IMRPhenomD/`, `data/SEOBNRv4/`, `data/IMRPhenomXHM/` with the same physical events but different waveform templates — useful for testing agent robustness across approximants.
+Each generates a separate subfolder. Point `--data-dir` at the one you want to evaluate on.
+
+---
+
