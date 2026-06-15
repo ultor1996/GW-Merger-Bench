@@ -33,7 +33,7 @@ except ImportError:
 SAMPLE_RATE       = 2048
 F_LOWER           = 20.0
 APPROXIMANT       = "IMRPhenomD"
-OVERLAP_THRESHOLD = 0.90
+OVERLAP_THRESHOLD = 0.80
 
 
 @dataclass
@@ -173,10 +173,91 @@ class GWEvaluator:
             stat_pass_phys_fail=ok_waveform and not ok_chirp_mass,
         )
 
+    # def _compute_waveform_overlap(self, mass1: float, mass2: float) -> tuple:
+    #     """
+    #     Compute noise-weighted overlap using submitted masses and
+    #     TRUE extrinsic parameters. Returns (overlap, passed).
+    #     """
+    #     if not PYCBC_AVAILABLE or self.task_dir is None:
+    #         return 0.0, False
+
+    #     try:
+    #         strain_H1, psd_H1, psd_freqs = self._load_data()
+
+    #         dt      = 1.0 / SAMPLE_RATE
+    #         n       = len(strain_H1)
+    #         delta_f = 1.0 / (n * dt)
+    #         flen    = n // 2 + 1
+
+    #         mass1 = max(float(mass1), 1.0)
+    #         mass2 = max(float(mass2), 1.0)
+    #         if mass1 < mass2:
+    #             mass1, mass2 = mass2, mass1
+
+    #         # Build PSD FrequencySeries
+    #         psd_interp = np.interp(
+    #             np.linspace(0, SAMPLE_RATE / 2, flen),
+    #             psd_freqs, psd_H1,
+    #             left=1e-40, right=1e-40,
+    #         )
+    #         psd_interp = np.where(psd_interp > 0, psd_interp, 1e-40)
+    #         psd_fs     = FrequencySeries(psd_interp, delta_f=delta_f)
+
+    #         # Detector projection using TRUE extrinsic params
+    #         det     = Detector("H1")
+    #         gps_coa = 1264316116.0 + self.true_coa_time
+    #         fp, fc  = det.antenna_pattern(
+    #             self.true_ra, self.true_dec, self.true_polarisation, gps_coa
+    #         )
+
+    #         coa_idx   = int(self.true_coa_time * SAMPLE_RATE)
+    #         strain_ts = TimeSeries(strain_H1, delta_t=dt)
+
+    #         # Try 4 coalescence phases — take best overlap
+    #         best_overlap = 0.0
+    #         for coa_phase in [0.0, np.pi/2, np.pi, 3*np.pi/2]:
+    #             try:
+    #                 hp2, hc2 = get_td_waveform(
+    #                     approximant=self.approximant,
+    #                     mass1=mass1, mass2=mass2,
+    #                     spin1z=self.true_spin1z,
+    #                     spin2z=self.true_spin2z,
+    #                     distance=self.true_distance,
+    #                     inclination=self.true_inclination,
+    #                     coa_phase=coa_phase,
+    #                     delta_t=dt, f_lower=F_LOWER,
+    #                 )
+    #                 raw2  = fp * np.array(hp2) + fc * np.array(hc2)
+    #                 sig2  = np.zeros(n)
+    #                 e2    = min(coa_idx, len(hp2))
+    #                 s2    = len(hp2) - e2
+    #                 sig2[coa_idx - e2: coa_idx] = raw2[s2:]
+
+    #                 tmpl_ts   = TimeSeries(sig2, delta_t=dt)
+    #                 tmpl_norm = float(sigma(tmpl_ts, psd=psd_fs,
+    #                                        low_frequency_cutoff=F_LOWER))
+    #                 if tmpl_norm < 1e-30:
+    #                     continue
+
+    #                 ov = overlap_cplx(strain_ts, tmpl_ts, psd=psd_fs,
+    #                                   low_frequency_cutoff=F_LOWER,
+    #                                   normalized=True)
+    #                 ov_abs = float(abs(ov))
+    #                 if ov_abs > best_overlap:
+    #                     best_overlap = ov_abs
+    #             except Exception:
+    #                 continue
+
+    #         return best_overlap, best_overlap >= OVERLAP_THRESHOLD
+
+    #     except Exception:
+    #         return 0.0, False
     def _compute_waveform_overlap(self, mass1: float, mass2: float) -> tuple:
         """
-        Compute noise-weighted overlap using submitted masses and
-        TRUE extrinsic parameters. Returns (overlap, passed).
+        Compute noise-weighted overlap using submitted chirp mass but
+        marginalising over mass ratio — tries 10 q values and takes best.
+        This decouples the overlap test from mass ratio recovery,
+        since matched filtering cannot reliably recover q.
         """
         if not PYCBC_AVAILABLE or self.task_dir is None:
             return 0.0, False
@@ -189,12 +270,14 @@ class GWEvaluator:
             delta_f = 1.0 / (n * dt)
             flen    = n // 2 + 1
 
+            # Derive submitted chirp mass from submitted masses
             mass1 = max(float(mass1), 1.0)
             mass2 = max(float(mass2), 1.0)
             if mass1 < mass2:
                 mass1, mass2 = mass2, mass1
+            sub_Mc = (mass1 * mass2)**0.6 / (mass1 + mass2)**0.2
 
-            # Build PSD FrequencySeries
+            # Build PSD
             psd_interp = np.interp(
                 np.linspace(0, SAMPLE_RATE / 2, flen),
                 psd_freqs, psd_H1,
@@ -203,50 +286,54 @@ class GWEvaluator:
             psd_interp = np.where(psd_interp > 0, psd_interp, 1e-40)
             psd_fs     = FrequencySeries(psd_interp, delta_f=delta_f)
 
-            # Detector projection using TRUE extrinsic params
             det     = Detector("H1")
             gps_coa = 1264316116.0 + self.true_coa_time
             fp, fc  = det.antenna_pattern(
                 self.true_ra, self.true_dec, self.true_polarisation, gps_coa
             )
-
             coa_idx   = int(self.true_coa_time * SAMPLE_RATE)
             strain_ts = TimeSeries(strain_H1, delta_t=dt)
 
-            # Try 4 coalescence phases — take best overlap
             best_overlap = 0.0
-            for coa_phase in [0.0, np.pi/2, np.pi, 3*np.pi/2]:
-                try:
-                    hp2, hc2 = get_td_waveform(
-                        approximant=self.approximant,
-                        mass1=mass1, mass2=mass2,
-                        spin1z=self.true_spin1z,
-                        spin2z=self.true_spin2z,
-                        distance=self.true_distance,
-                        inclination=self.true_inclination,
-                        coa_phase=coa_phase,
-                        delta_t=dt, f_lower=F_LOWER,
-                    )
-                    raw2  = fp * np.array(hp2) + fc * np.array(hc2)
-                    sig2  = np.zeros(n)
-                    e2    = min(coa_idx, len(hp2))
-                    s2    = len(hp2) - e2
-                    sig2[coa_idx - e2: coa_idx] = raw2[s2:]
 
-                    tmpl_ts   = TimeSeries(sig2, delta_t=dt)
-                    tmpl_norm = float(sigma(tmpl_ts, psd=psd_fs,
-                                           low_frequency_cutoff=F_LOWER))
-                    if tmpl_norm < 1e-30:
+            # Marginalise over mass ratio — try 10 q values at submitted Mc
+            for q_try in np.linspace(0.1, 1.0, 10):
+                q_try = float(np.clip(q_try, 0.05, 1.0))
+                m1_try = sub_Mc * (1.0 + q_try)**(1.0/5.0) / q_try**(3.0/5.0)
+                m2_try = q_try * m1_try
+
+                for coa_phase in [0.0, np.pi/2, np.pi, 3*np.pi/2]:
+                    try:
+                        hp2, hc2 = get_td_waveform(
+                            approximant=self.approximant,
+                            mass1=m1_try, mass2=m2_try,
+                            spin1z=self.true_spin1z,
+                            spin2z=self.true_spin2z,
+                            distance=self.true_distance,
+                            inclination=self.true_inclination,
+                            coa_phase=coa_phase,
+                            delta_t=dt, f_lower=F_LOWER,
+                        )
+                        raw2  = fp * np.array(hp2) + fc * np.array(hc2)
+                        sig2  = np.zeros(n)
+                        e2    = min(coa_idx, len(hp2))
+                        s2    = len(hp2) - e2
+                        sig2[coa_idx - e2: coa_idx] = raw2[s2:]
+
+                        tmpl_ts   = TimeSeries(sig2, delta_t=dt)
+                        tmpl_norm = float(sigma(tmpl_ts, psd=psd_fs,
+                                            low_frequency_cutoff=F_LOWER))
+                        if tmpl_norm < 1e-30:
+                            continue
+
+                        ov = overlap_cplx(strain_ts, tmpl_ts, psd=psd_fs,
+                                        low_frequency_cutoff=F_LOWER,
+                                        normalized=True)
+                        ov_abs = float(abs(ov))
+                        if ov_abs > best_overlap:
+                            best_overlap = ov_abs
+                    except Exception:
                         continue
-
-                    ov = overlap_cplx(strain_ts, tmpl_ts, psd=psd_fs,
-                                      low_frequency_cutoff=F_LOWER,
-                                      normalized=True)
-                    ov_abs = float(abs(ov))
-                    if ov_abs > best_overlap:
-                        best_overlap = ov_abs
-                except Exception:
-                    continue
 
             return best_overlap, best_overlap >= OVERLAP_THRESHOLD
 

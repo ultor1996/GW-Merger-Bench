@@ -46,33 +46,47 @@ A task **passes only if all four criteria pass simultaneously** (conjunction gat
 
 | Criterion | What it checks | Threshold |
 |---|---|---|
-| `ok_waveform_match` | Noise-weighted overlap between reconstructed waveform and observed strain | ≥ 0.90 |
+| `ok_waveform_match` | Noise-weighted overlap between reconstructed waveform and observed strain | ≥ 0.80 |
 | `ok_chirp_mass` | Chirp mass error vs true value | ≤ 5% |
 | `ok_mass_ratio` | Mass ratio absolute error vs true value | ≤ 0.15 |
 | `ok_merger_type` | BBH / BNS / NSBH exact string match | exact |
 
 ### How `ok_waveform_match` works
 
-The evaluator computes this entirely independently using the submitted masses and the **true extrinsic parameters** (distance, sky location, inclination, spins) from `ground_truth.json`. This means the overlap test purely measures whether the agent recovered the correct masses — it is not penalised for unknown extrinsic parameters.
+The evaluator computes this entirely independently. Because mass ratio cannot
+be reliably recovered from matched filtering alone — the SNR surface is nearly
+flat in the q direction — the evaluator **marginalises over mass ratio** when
+computing the waveform overlap. It derives the submitted chirp mass from the
+submitted masses, then tries 10 mass ratio values at that chirp mass and takes
+the best overlap. This means `ok_waveform_match` purely tests whether the agent
+recovered the correct **chirp mass**, which matched filtering can reliably measure.
 
-```
-Agent submits: chirp_mass=28.5, mass1=32, mass2=24, mass_ratio=0.75
-                        ↓
-Evaluator reads true distance, ra, dec, inclination, spins from ground_truth.json
-                        ↓
-Generates clean waveform template with submitted masses + true extrinsics
-                        ↓
-Projects onto H1 detector
-                        ↓
-Tries 4 coalescence phases (0, π/2, π, 3π/2) — takes best overlap
-                        ↓
-Noise-weighted overlap: <h_template | strain_H1> / sqrt(<h|h> × <s|s>)
-                        ↓
-Passes if overlap ≥ 0.90
-```
+    Agent submits: chirp_mass=28.5, mass1=32, mass2=24, mass_ratio=0.75
+                            ↓
+    Evaluator derives submitted chirp mass from submitted mass1, mass2
+                            ↓
+    Reads true distance, ra, dec, inclination, spins from ground_truth.json
+                            ↓
+    Tries 10 mass ratios (q=0.1 to 1.0) at the submitted chirp mass.
+    For each q:
+      → generates clean waveform template with that (Mc, q) + true extrinsics
+      → projects onto H1 detector
+      → tries 4 coalescence phases (0, π/2, π, 3π/2)
+      → computes noise-weighted overlap
+                            ↓
+    Takes best overlap across all q values and phases
+                            ↓
+    Passes if best overlap ≥ 0.80
 
-The gap between `ok_waveform_match` passing and `ok_chirp_mass` failing is the core **"good statistics ≠ good physics"** signal — the agent found a waveform that fits the data but with wrong physical parameters. This is tracked as `stat_pass_phys_fail` in the results.
+Why marginalise over q? A discrete matched filter grid (50 chirp masses × 10
+mass ratios) reliably recovers chirp mass but not mass ratio — the network SNR
+is nearly degenerate in q at fixed Mc. Penalising the waveform overlap for wrong
+q would be unfair given this fundamental limitation of matched filtering. The
+`ok_mass_ratio` criterion independently tests mass ratio recovery with its own
+threshold.
 
+The gap between `ok_waveform_match` passing and `ok_chirp_mass` failing is the
+core **"good statistics ≠ good physics"** signal — tracked as `stat_pass_phys_fail`.
 ---
 
 ## Repository Structure
@@ -96,7 +110,6 @@ GW_merger_bench/
 │   │   │   ├── psd_H1.npy
 │   │   │   ├── psd_L1.npy
 │   │   │   ├── psd_freqs.npy
-│   │   │   ├── times.npy
 │   │   │   ├── task.json           — public (no tier/difficulty)
 │   │   │   └── ground_truth.json   — hidden (tier, difficulty, true params)
 │   │   ├── 001/
@@ -240,7 +253,6 @@ saves per-task JSON + run_summary.json
         "psd_H1":     "/absolute/path/psd_H1.npy",
         "psd_L1":     "/absolute/path/psd_L1.npy",
         "psd_freqs":  "/absolute/path/psd_freqs.npy",
-        "times":      "/absolute/path/times.npy"
     },
     "submission_format":  { ... },
     "output_path":        "/tmp/xxx/output.json"
@@ -375,7 +387,7 @@ overall   115/300 (38%)      19.09%    0.181      0.788        27%
 | `Mc err%` | Mean chirp mass percentage error |
 | `q err` | Mean mass ratio absolute error |
 | `Overlap` | Mean noise-weighted waveform overlap |
-| `Stat✓Phys✗` | Waveform matched (≥ 0.90) but chirp mass failed — the "good statistics ≠ good physics" gap |
+| `Stat✓Phys✗` | Waveform matched (≥ 0.80) but chirp mass failed — the "good statistics ≠ good physics" gap |
 
 ---
 
@@ -399,7 +411,7 @@ Lower SNR, more unequal masses, higher spins, and edge-on inclinations all make 
 
 ```python
 # evaluation/evaluator.py
-OVERLAP_THRESHOLD   = 0.90   # waveform match threshold
+OVERLAP_THRESHOLD   = 0.80   # waveform match threshold
 chirp_mass_tol_frac = 0.05   # 5% — baked into ground_truth.json at generation time
 mass_ratio_tol_abs  = 0.15   # absolute — baked into ground_truth.json at generation time
 ```

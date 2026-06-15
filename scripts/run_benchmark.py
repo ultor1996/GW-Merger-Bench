@@ -5,14 +5,6 @@ Calls an external agent pipeline once per task, evaluates the final
 submission against ground truth, saves a per-task JSON report.
 
 No turn loop. No feedback to the agent. Single-shot evaluation only.
-
-Usage:
-  python scripts/run_benchmark.py \
-      --pipeline-path /path/to/your/pipeline \
-      --pipeline-entry run.py \
-      --data-dir data/IMRPhenomD \
-      --tier easy \
-      --outfile results/my_run.json
 """
 
 import argparse
@@ -30,9 +22,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from evaluation.evaluator import GWEvaluator
 
 
-# ---------------------------------------------------------------------------
-# Constants — only the 6 recoverable parameters
-# ---------------------------------------------------------------------------
 BLANK_SUBMISSION = {
     "chirp_mass_Msun": 0.0,
     "mass1_Msun":      0.0,
@@ -48,15 +37,13 @@ REQUIRED_KEYS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Pipeline runner
-# ---------------------------------------------------------------------------
 def run_pipeline(pipeline_path, pipeline_entry, task_json,
                  task_dir, timeout, verbose) -> dict:
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path  = os.path.join(tmpdir, "input.json")
         output_path = os.path.join(tmpdir, "output.json")
 
+        # times is NOT included — agent uses sample_rate from task.json
         pipeline_input = {
             "task_id":            task_json["task_id"],
             "task_description":   task_json["description"],
@@ -70,7 +57,6 @@ def run_pipeline(pipeline_path, pipeline_entry, task_json,
                 "psd_H1":    os.path.abspath(os.path.join(task_dir, "psd_H1.npy")),
                 "psd_L1":    os.path.abspath(os.path.join(task_dir, "psd_L1.npy")),
                 "psd_freqs": os.path.abspath(os.path.join(task_dir, "psd_freqs.npy")),
-                "times":     os.path.abspath(os.path.join(task_dir, "times.npy")),
             },
             "submission_format": task_json.get("submission_format", {}),
             "output_path":       output_path,
@@ -141,9 +127,6 @@ def _parse_output(output_path: str) -> dict:
         return BLANK_SUBMISSION.copy()
 
 
-# ---------------------------------------------------------------------------
-# Task loading
-# ---------------------------------------------------------------------------
 def load_tasks(data_dir: str, tiers: list, max_tasks: int = None) -> list:
     index_path = os.path.join(data_dir, "index.json")
     if not os.path.exists(index_path):
@@ -159,9 +142,6 @@ def load_tasks(data_dir: str, tiers: list, max_tasks: int = None) -> list:
     return tasks
 
 
-# ---------------------------------------------------------------------------
-# Main benchmark loop
-# ---------------------------------------------------------------------------
 def run_benchmark(args):
     tiers = ["easy", "medium", "hard"] if args.tier == "all" else [args.tier]
     tasks = load_tasks(args.data_dir, tiers, args.max_tasks)
@@ -255,9 +235,6 @@ def run_benchmark(args):
     return run_report
 
 
-# ---------------------------------------------------------------------------
-# Aggregation
-# ---------------------------------------------------------------------------
 def _aggregate(task_results: list) -> dict:
     from collections import defaultdict
     by_tier = defaultdict(list)
@@ -305,9 +282,6 @@ def _print_summary(stats: dict):
         print(f"{tier:<10} {ps:<14} {cm:>8}  {mr:>6}  {ov:>8}  {spf:>10}")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(
         description="GW Merger Bench",
@@ -319,8 +293,7 @@ def main():
     p.add_argument("--tier",    default="all",
                    choices=["easy", "medium", "hard", "all"])
     p.add_argument("--max-tasks", type=int, default=None)
-    p.add_argument("--data-dir",  default="data/IMRPhenomD",
-                   help="Path to approximant subfolder, e.g. data/IMRPhenomD")
+    p.add_argument("--data-dir",  default="data/IMRPhenomD")
     p.add_argument("--outfile",   default=None)
     p.add_argument("--verbose",   action="store_true")
     args = p.parse_args()

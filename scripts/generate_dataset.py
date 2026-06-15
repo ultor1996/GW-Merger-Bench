@@ -9,17 +9,16 @@ Each task is saved as:
       psd_H1.npy          — noise PSD used (H1)
       psd_L1.npy          — noise PSD used (L1)
       psd_freqs.npy       — PSD frequency axis
-      times.npy           — GPS-relative time array
       task.json           — task metadata (public, no true params, no tier)
       ground_truth.json   — true parameters + tier (hidden from agent)
 
+times.npy is NOT saved — sample_rate is in task.json and sufficient.
 All tasks live in one flat folder under the approximant subfolder.
 Tier is stored only in ground_truth.json — never given to the agent.
 
 Usage:
   python scripts/generate_dataset.py
   python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomD
-  python scripts/generate_dataset.py --seed 42 --approximant SEOBNRv4
 """
 
 import argparse
@@ -30,9 +29,6 @@ import numpy as np
 from dataclasses import dataclass, asdict
 from typing import Tuple
 
-# ---------------------------------------------------------------------------
-# PyCBC imports
-# ---------------------------------------------------------------------------
 try:
     from pycbc.waveform import get_td_waveform
     from pycbc.detector import Detector
@@ -45,9 +41,6 @@ except ImportError:
     print("WARNING: pycbc not found. Install with: pip install pycbc")
 
 
-# ---------------------------------------------------------------------------
-# Difficulty configuration
-# ---------------------------------------------------------------------------
 DIFFICULTY_CONFIG = {
     "easy": {
         "n_tasks":               5,
@@ -81,15 +74,11 @@ DIFFICULTY_CONFIG = {
 SAMPLE_RATE      = 2048
 SEGMENT_DURATION = 16
 F_LOWER          = 20.0
-APPROXIMANT      = "IMRPhenomD"   # overridden by CLI
+APPROXIMANT      = "IMRPhenomD"
 
 
-# ---------------------------------------------------------------------------
-# Parameter dataclasses
-# ---------------------------------------------------------------------------
 @dataclass
 class TrueParams:
-    """Ground truth — never shown to the agent."""
     task_id:                  str
     tier:                     str
     difficulty_score:         int
@@ -119,7 +108,6 @@ class TrueParams:
 
 @dataclass
 class TaskMetadata:
-    """Public task description given to the agent. No tier or difficulty."""
     task_id:           str
     description:       str
     sample_rate:       int
@@ -130,22 +118,18 @@ class TaskMetadata:
     submission_format: dict
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _chirp_mass(m1: float, m2: float) -> float:
+def _chirp_mass(m1, m2):
     return (m1 * m2) ** 0.6 / (m1 + m2) ** 0.2
 
 
-def _chirp_mass_from_dfdt(f: float, dfdt: float) -> float:
+def _chirp_mass_from_dfdt(f, dfdt):
     G_over_c3 = 4.925491025543576e-06
-    Mchirp_s = (5.0 / 96.0 * np.pi ** (-8.0 / 3.0) *
-                f ** (-11.0 / 3.0) * dfdt) ** (3.0 / 5.0)
+    Mchirp_s  = (5.0 / 96.0 * np.pi ** (-8.0/3.0) *
+                 f ** (-11.0/3.0) * dfdt) ** (3.0/5.0)
     return Mchirp_s / G_over_c3
 
 
 def _colored_noise(psd_vals, psd_freqs, n_samples, sample_rate, seed):
-    """Colored Gaussian noise from PSD — numpy only, no lal dependency."""
     rng_n      = np.random.default_rng(seed)
     flen       = n_samples // 2 + 1
     freqs      = np.fft.rfftfreq(n_samples, d=1.0 / sample_rate)
@@ -159,17 +143,7 @@ def _colored_noise(psd_vals, psd_freqs, n_samples, sample_rate, seed):
     return np.fft.irfft(noise_f, n=n_samples).astype(np.float64)
 
 
-# ---------------------------------------------------------------------------
-# Generate one event
-# ---------------------------------------------------------------------------
-def generate_one_event(
-    task_id: str,
-    tier: str,
-    cfg: dict,
-    rng: random.Random,
-    np_rng: np.random.Generator,
-) -> Tuple[TrueParams, TaskMetadata, dict]:
-
+def generate_one_event(task_id, tier, cfg, rng, np_rng):
     if not PYCBC_AVAILABLE:
         raise RuntimeError("pycbc is required.")
 
@@ -189,10 +163,9 @@ def generate_one_event(
     coa_phase   = rng.uniform(0, 2 * np.pi)
     coa_time_offset = SEGMENT_DURATION * 0.67
 
-    dt    = 1.0 / SAMPLE_RATE
-    flen  = int(SEGMENT_DURATION * SAMPLE_RATE / 2) + 1
+    dt   = 1.0 / SAMPLE_RATE
+    flen = int(SEGMENT_DURATION * SAMPLE_RATE / 2) + 1
 
-    # Waveform
     hp, hc = get_td_waveform(
         approximant=APPROXIMANT,
         mass1=m1, mass2=m2,
@@ -201,12 +174,10 @@ def generate_one_event(
         delta_t=dt, f_lower=F_LOWER, distance=100.0,
     )
 
-    # PSD
     delta_f = 1.0 / SEGMENT_DURATION
     psd_H1  = aLIGOZeroDetHighPower(flen, delta_f, F_LOWER)
     psd_L1  = aLIGOZeroDetHighPower(flen, delta_f, F_LOWER)
 
-    # Detector projection
     det_H1  = Detector("H1")
     det_L1  = Detector("L1")
     ref_gps = 1264316116.0
@@ -228,7 +199,6 @@ def generate_one_event(
     sig_H1 = project_and_resize(hp, hc, fp_H1, fc_H1, n_samples)
     sig_L1 = project_and_resize(hp, hc, fp_L1, fc_L1, n_samples)
 
-    # Optimal SNR at 100 Mpc
     try:
         opt_snr_H1_100 = float(sigma(TimeSeries(sig_H1, delta_t=dt),
                                      psd=psd_H1, low_frequency_cutoff=F_LOWER))
@@ -247,12 +217,10 @@ def generate_one_event(
     opt_snr_L1      = opt_snr_L1_100 * scale
     network_snr     = np.sqrt(opt_snr_H1 ** 2 + opt_snr_L1 ** 2)
 
-    # PSD arrays (must be built before noise generation)
     psd_freqs_arr = np.linspace(0, SAMPLE_RATE / 2, flen)
     psd_vals_H1   = np.array(psd_H1)
     psd_vals_L1   = np.array(psd_L1)
 
-    # Colored Gaussian noise
     noise_arr_H1 = _colored_noise(psd_vals_H1, psd_freqs_arr, n_samples, SAMPLE_RATE,
                                   seed=abs(hash(task_id + "H1")) % (2 ** 31))
     noise_arr_L1 = _colored_noise(psd_vals_L1, psd_freqs_arr, n_samples, SAMPLE_RATE,
@@ -261,17 +229,16 @@ def generate_one_event(
     strain_H1 = noise_arr_H1 + sig_H1
     strain_L1 = noise_arr_L1 + sig_L1
 
-    # Anchor values
     Mc        = _chirp_mass(m1, m2)
     isco_freq = 4400.0 / (m1 + m2)
     G_over_c3 = 4.925491025543576e-06
     Mc_s      = Mc * G_over_c3
     f_ref     = 100.0
-    dfdt_ref  = (96.0 / 5.0) * np.pi ** (8.0 / 3.0) * Mc_s ** (5.0 / 3.0) * f_ref ** (11.0 / 3.0)
+    dfdt_ref  = (96.0 / 5.0) * np.pi ** (8.0/3.0) * Mc_s ** (5.0/3.0) * f_ref ** (11.0/3.0)
     Mc_anchor = _chirp_mass_from_dfdt(f_ref, dfdt_ref)
 
-    lo, hi    = cfg["difficulty_score_range"]
-    diff_score= rng.randint(lo, hi)
+    lo, hi     = cfg["difficulty_score_range"]
+    diff_score = rng.randint(lo, hi)
 
     true_params = TrueParams(
         task_id=task_id, tier=tier, difficulty_score=diff_score,
@@ -295,9 +262,8 @@ def generate_one_event(
         description=(
             "A gravitational-wave strain signal has been recorded by the H1 and L1 detectors. "
             f"The segment is {SEGMENT_DURATION}s long at {SAMPLE_RATE} Hz. "
-            "Your task is to detect the signal, estimate the chirp mass, component masses, "
-            "mass ratio, spins, distance, and sky location, and classify the merger type. "
-            "Submit your parameter estimates."
+            "Estimate the chirp mass, component masses, mass ratio, network SNR, "
+            "and classify the merger type."
         ),
         sample_rate=SAMPLE_RATE, segment_duration=SEGMENT_DURATION, f_lower=F_LOWER,
         detectors=["H1", "L1"], approximant_hint=APPROXIMANT,
@@ -311,25 +277,22 @@ def generate_one_event(
         },
     )
 
+    # times.npy NOT saved — sample_rate in task.json is sufficient
     arrays = {
         "strain_H1": strain_H1, "strain_L1": strain_L1,
         "psd_H1":    psd_vals_H1, "psd_L1":  psd_vals_L1,
-        "psd_freqs": psd_freqs_arr, "times":  np.linspace(0, SEGMENT_DURATION, n_samples, endpoint=False),
+        "psd_freqs": psd_freqs_arr,
     }
 
     return true_params, task_meta, arrays
 
 
-# ---------------------------------------------------------------------------
-# Save one task
-# ---------------------------------------------------------------------------
-def save_task(base_outdir: str, approximant: str,
-              true_params: TrueParams, task_meta: TaskMetadata, arrays: dict):
-    # data/{approximant}/{task_id}/
+def save_task(base_outdir, approximant, true_params, task_meta, arrays):
     task_dir = os.path.join(base_outdir, approximant, task_meta.task_id)
     os.makedirs(task_dir, exist_ok=True)
 
-    for key in ["strain_H1", "strain_L1", "psd_H1", "psd_L1", "psd_freqs", "times"]:
+    # Save only the 5 data files — no times.npy
+    for key in ["strain_H1", "strain_L1", "psd_H1", "psd_L1", "psd_freqs"]:
         np.save(os.path.join(task_dir, f"{key}.npy"), arrays[key])
 
     with open(os.path.join(task_dir, "task.json"), "w") as f:
@@ -342,10 +305,7 @@ def save_task(base_outdir: str, approximant: str,
           f"  Mc={true_params.chirp_mass:.1f}  q={true_params.mass_ratio:.2f}")
 
 
-# ---------------------------------------------------------------------------
-# Build index
-# ---------------------------------------------------------------------------
-def build_index(base_outdir: str, approximant: str):
+def build_index(base_outdir, approximant):
     outdir = os.path.join(base_outdir, approximant)
     index  = {"approximant": approximant, "tasks": []}
 
@@ -379,16 +339,12 @@ def build_index(base_outdir: str, approximant: str):
           f"hard={index['by_tier']['hard']}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Generate GW Merger Bench dataset")
     parser.add_argument("--seed",        type=int, default=42)
     parser.add_argument("--approximant", type=str, default="IMRPhenomD",
                         choices=["IMRPhenomD", "SEOBNRv4", "IMRPhenomXHM"])
-    parser.add_argument("--outdir",      type=str, default="data",
-                        help="Base output directory. Tasks saved to <outdir>/<approximant>/")
+    parser.add_argument("--outdir",      type=str, default="data")
     args = parser.parse_args()
 
     if not PYCBC_AVAILABLE:
@@ -399,6 +355,7 @@ def main():
     APPROXIMANT = args.approximant
     print(f"Approximant: {APPROXIMANT}")
     print(f"Output:      {args.outdir}/{APPROXIMANT}/")
+    print(f"Note: times.npy will NOT be saved — sample_rate in task.json is sufficient.")
 
     rng    = random.Random(args.seed)
     np_rng = np.random.default_rng(args.seed)
