@@ -13,7 +13,9 @@ import os
 import numpy as np
 from dataclasses import dataclass, asdict
 from typing import Dict, Any, Optional
-
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import OVERLAP_THRESHOLD, NS_MAX_MASS, SAMPLE_RATE, F_LOWER, APPROXIMANT
 try:
     from pycbc.waveform import get_td_waveform
     from pycbc.detector import Detector
@@ -22,11 +24,6 @@ try:
     PYCBC_AVAILABLE = True
 except ImportError:
     PYCBC_AVAILABLE = False
-
-SAMPLE_RATE       = 2048
-F_LOWER           = 20.0
-APPROXIMANT       = "IMRPhenomD"
-OVERLAP_THRESHOLD = 0.80
 
 
 @dataclass
@@ -264,7 +261,7 @@ class GWEvaluator:
         if submitted_type != self.true_merger_type:
             return False
         if sub_mass1 > 0 and sub_mass2 > 0:
-            ns = 3.0
+            ns = NS_MAX_MASS
             lo = min(sub_mass1, sub_mass2)
             hi = max(sub_mass1, sub_mass2)
             if submitted_type == "BBH":

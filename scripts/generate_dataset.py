@@ -28,7 +28,12 @@ import random
 import numpy as np
 from dataclasses import dataclass, asdict
 from typing import Tuple
-
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import (
+    CHIRP_MASS_TOL_FRAC, MASS_RATIO_TOL_ABS, SNR_TOL_FRAC,
+    SAMPLE_RATE, SEGMENT_DURATION, F_LOWER, APPROXIMANT,
+)
 try:
     from pycbc.waveform import get_td_waveform
     from pycbc.detector import Detector
@@ -71,10 +76,6 @@ DIFFICULTY_CONFIG = {
     },
 }
 
-SAMPLE_RATE      = 2048
-SEGMENT_DURATION = 16
-F_LOWER          = 20.0
-APPROXIMANT      = "IMRPhenomD"
 
 
 @dataclass
@@ -254,7 +255,7 @@ def generate_one_event(task_id, tier, cfg, rng, np_rng):
         optimal_snr_H1=round(opt_snr_H1, 3),
         optimal_snr_L1=round(opt_snr_L1, 3),
         merger_type="BBH", approximant=APPROXIMANT,
-        chirp_mass_tol_frac=0.15, mass_ratio_tol_abs=0.15, snr_tol_frac=0.20,
+        chirp_mass_tol_frac=CHIRP_MASS_TOL_FRAC, mass_ratio_tol_abs=MASS_RATIO_TOL_ABS, snr_tol_frac=SNR_TOL_FRAC,
     )
 
     task_meta = TaskMetadata(
