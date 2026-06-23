@@ -193,7 +193,7 @@ def run_benchmark(args):
         n_crit  = metrics["n_criteria_passed"]
 
         print(f"[{i:03d}/{len(tasks)}] {task_id:10s} tier={tier:6s} "
-              f"{'PASS' if passed else 'FAIL'}  crit={n_crit}/4  t={elapsed}s")
+              f"{'PASS' if passed else 'FAIL'}  crit={n_crit}/{metrics['n_criteria_total']}   t={elapsed}s")
 
         task_result = {
             "task_id":    task_id,

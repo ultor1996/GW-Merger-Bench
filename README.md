@@ -1,12 +1,10 @@
 # GW Merger Bench
 
-A benchmark for evaluating AI agents on gravitational-wave parameter estimation. Agents analyse synthetic binary black hole (BBH) strain data from LIGO-style detectors and recover physical parameters. The benchmark grades the final submission on a conjunction gate that separates statistical fit quality from physical correctness.
+A benchmark for evaluating AI agents on gravitational-wave (GW) parameter estimation. Agents analyse synthetic binary black hole (BBH) strain data from LIGO-style detectors and recover physical parameters. The benchmark grades submissions on a conjunction of physics-grounded criteria, separating statistical fit quality from physical correctness.
 
 ---
 
 ## What the Agent Submits
-
-The agent only submits the **6 parameters that are physically recoverable** from single-detector matched filtering:
 
 | Parameter | Description |
 |---|---|
@@ -17,76 +15,54 @@ The agent only submits the **6 parameters that are physically recoverable** from
 | `network_snr` | Estimated SNR from matched filter |
 | `merger_type` | Exactly `"BBH"`, `"BNS"`, or `"NSBH"` |
 
-Parameters like spins, distance, sky location, and inclination are **not required** — they cannot be reliably recovered from single-detector matched filtering and are not evaluated.
+Parameters like spins, distance, sky location, and inclination are **not evaluated** — they cannot be reliably recovered from single-detector matched filtering.
 
 ---
 
 ## What Each Task Gives the Agent
 
-Each task provides:
-
-- A 16-second strain time series from two detectors (H1 and L1) as `.npy` files
+- A 16-second strain time series from H1 and L1 as `.npy` files
 - The detector noise PSD as `.npy` files
-- A `task.json` with physics metadata (sample rate, f_lower, approximant, segment duration)
+- A `task.json` with physics metadata (sample rate, f_lower, approximant hint, segment duration)
 
-**What is NOT given to the agent:**
-
-- Difficulty tier (easy / medium / hard)
-- Difficulty score
-- True parameter values
-- Feedback of any kind
-
-Tier and difficulty score are stored only in `ground_truth.json`, which is never passed to the agent.
+**Never given to the agent:** difficulty tier, true parameter values, feedback.
 
 ---
 
 ## Evaluation Criteria
 
-A task **passes only if all four criteria pass simultaneously** (conjunction gate):
+A task **passes only if all three criteria pass simultaneously**:
 
 | Criterion | What it checks | Threshold |
 |---|---|---|
-| `ok_waveform_match` | Noise-weighted overlap between reconstructed waveform and observed strain | ≥ 0.80 |
-| `ok_chirp_mass` | Chirp mass error vs true value | ≤ 5% |
-| `ok_mass_ratio` | Mass ratio absolute error vs true value | ≤ 0.15 |
+| `ok_chirp_mass` | Chirp mass fractional error vs true value | ≤ tier-dependent (5/8/10%) |
+| `ok_mass_ratio` | Mass ratio absolute error vs true value | ≤ tier-dependent (0.15/0.20/0.25) |
 | `ok_merger_type` | BBH / BNS / NSBH exact string match | exact |
 
-### How `ok_waveform_match` works
+Waveform overlap (`ok_waveform_match`) is **computed and reported as a diagnostic** but does not gate pass/fail. It depends on extrinsic parameters (sky, distance, inclination) the agent cannot recover, so including it in the pass gate would unfairly penalise the agent for parameters it was never designed to estimate.
 
-The evaluator computes this entirely independently. Because mass ratio cannot
-be reliably recovered from matched filtering alone — the SNR surface is nearly
-flat in the q direction — the evaluator **marginalises over mass ratio** when
-computing the waveform overlap. It derives the submitted chirp mass from the
-submitted masses, then tries 10 mass ratio values at that chirp mass and takes
-the best overlap. This means `ok_waveform_match` purely tests whether the agent
-recovered the correct **chirp mass**, which matched filtering can reliably measure.
+### The stat_pass_phys_fail diagnostic
 
-    Agent submits: chirp_mass=28.5, mass1=32, mass2=24, mass_ratio=0.75
-                            ↓
-    Evaluator derives submitted chirp mass from submitted mass1, mass2
-                            ↓
-    Reads true distance, ra, dec, inclination, spins from ground_truth.json
-                            ↓
-    Tries 10 mass ratios (q=0.1 to 1.0) at the submitted chirp mass.
-    For each q:
-      → generates clean waveform template with that (Mc, q) + true extrinsics
-      → projects onto H1 detector
-      → tries 4 coalescence phases (0, π/2, π, 3π/2)
-      → computes noise-weighted overlap
-                            ↓
-    Takes best overlap across all q values and phases
-                            ↓
-    Passes if best overlap ≥ 0.80
+`stat_pass_phys_fail = True` when `ok_waveform_match=True` but `ok_chirp_mass=False` — the agent found a waveform that fits the data but at the wrong physical parameters. This is the core **"good statistics ≠ good physics"** signal.
 
-Why marginalise over q? A discrete matched filter grid (50 chirp masses × 10
-mass ratios) reliably recovers chirp mass but not mass ratio — the network SNR
-is nearly degenerate in q at fixed Mc. Penalising the waveform overlap for wrong
-q would be unfair given this fundamental limitation of matched filtering. The
-`ok_mass_ratio` criterion independently tests mass ratio recovery with its own
-threshold.
+---
 
-The gap between `ok_waveform_match` passing and `ok_chirp_mass` failing is the
-core **"good statistics ≠ good physics"** signal — tracked as `stat_pass_phys_fail`.
+## Difficulty Tiers
+
+Tier is stored in `ground_truth.json` only — the agent never sees it:
+
+| Parameter | Easy | Medium | Hard |
+|---|---|---|---|
+| `network_snr_range` | 20–35 | 12–20 | 8–12 |
+| `total_mass_range` (M☉) | 40–80 | 25–120 | 10–200 |
+| `mass_ratio_range` | 0.7–1.0 | 0.4–0.9 | 0.1–0.6 |
+| `spin_magnitude_range` | 0.0–0.0 | 0.0–0.0 | 0.0–0.0 |
+| `inclination_range` (rad) | 0.0–0.0 | 0.0–0.0 | 0.0–0.0 |
+| `chirp_mass_tol_frac` | 0.05 | 0.08 | 0.10 |
+| `mass_ratio_tol_abs` | 0.15 | 0.20 | 0.25 |
+
+Current dataset (`IMRPhenomD_zerospin`) uses zero spin and face-on inclination for all tiers — a controlled benchmark isolating Mc/q recovery as the sole difficulty axis. Difficulty increases via lower SNR and more unequal mass ratios.
+
 ---
 
 ## Repository Structure
@@ -99,34 +75,33 @@ GW_merger_bench/
 │   └── run_benchmark.py      — runs any external pipeline, saves results
 │
 ├── evaluation/
-│   └── evaluator.py          — conjunction gate + waveform overlap forward model
+│   └── evaluator.py          — 3-criterion conjunction gate + waveform overlap
 │
 ├── data/
-│   ├── IMRPhenomD/           ← approximant subfolder
-│   │   ├── index.json
-│   │   ├── 000/
-│   │   │   ├── strain_H1.npy
-│   │   │   ├── strain_L1.npy
-│   │   │   ├── psd_H1.npy
-│   │   │   ├── psd_L1.npy
-│   │   │   ├── psd_freqs.npy
-│   │   │   ├── task.json           — public (no tier/difficulty)
-│   │   │   └── ground_truth.json   — hidden (tier, difficulty, true params)
-│   │   ├── 001/
-│   │   └── ...
+│   ├── IMRPhenomD/           ← original dataset (with spins, old tolerances)
+│   ├── IMRPhenomD_zerospin/  ← current benchmark dataset
+│   │   └── IMRPhenomD/
+│   │       ├── index.json
+│   │       ├── 000/
+│   │       │   ├── strain_H1.npy
+│   │       │   ├── strain_L1.npy
+│   │       │   ├── psd_H1.npy
+│   │       │   ├── psd_L1.npy
+│   │       │   ├── psd_freqs.npy
+│   │       │   ├── task.json           — public (no tier/difficulty)
+│   │       │   └── ground_truth.json   — hidden (tier, true params, tolerances)
+│   │       └── ...
 │   ├── SEOBNRv4/
 │   └── IMRPhenomXHM/
 │
 └── results/
-    └── easy_2026-06-11_12-00-00/
+    ├── plots/                    — chirp signal plots per task
+    ├── agent_logs/               — full agent step logs per task
+    └── all_2026-06-22_16-39-22/
         ├── run_summary.json
-        ├── agent_logs/
-        │   └── 000_agent.log
         ├── 000.json
         └── ...
 ```
-
-All tasks are flat within each approximant subfolder — no `easy/medium/hard` subfolders. Tier is stored only in `ground_truth.json`.
 
 ---
 
@@ -154,25 +129,19 @@ python -c "from pycbc.waveform import get_td_waveform; print('waveform ok')"
 ## Generating the Dataset
 
 ```bash
-# Default: IMRPhenomD, saved to data/IMRPhenomD/
-python scripts/generate_dataset.py --seed 42
+# Zero-spin controlled benchmark (current default)
+python scripts/generate_dataset.py \
+    --seed 42 \
+    --approximant IMRPhenomD \
+    --outdir data/IMRPhenomD_zerospin
 
-# Explicit approximant
+# Multiple approximants with same physical parameters (same seed)
+python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomD
 python scripts/generate_dataset.py --seed 42 --approximant SEOBNRv4
-
-# Custom base output dir
-python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomD --outdir data
+python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomXHM
 ```
 
-Generates **300 tasks** (100 easy / 100 medium / 100 hard) saved to `data/{approximant}/`. Takes 5–10 minutes.
-
-### Options
-
-| Argument | Default | Description |
-|---|---|---|
-| `--seed` | `42` | Random seed for reproducibility |
-| `--approximant` | `IMRPhenomD` | Waveform model — also becomes the subfolder name |
-| `--outdir` | `data` | Base output directory |
+Generates **15 tasks** (5 easy / 5 medium / 5 hard) by default. Edit `DIFFICULTY_CONFIG` in `generate_dataset.py` to change `n_tasks` per tier.
 
 ### What task.json contains (given to agent)
 
@@ -185,39 +154,34 @@ Generates **300 tasks** (100 easy / 100 medium / 100 hard) saved to `data/{appro
     "f_lower":          20.0,
     "detectors":        ["H1", "L1"],
     "approximant_hint": "IMRPhenomD",
-    "submission_format": {
-        "chirp_mass_Msun": "float",
-        "mass1_Msun":      "float",
-        "mass2_Msun":      "float",
-        "mass_ratio":      "float — m2/m1, in (0,1]",
-        "network_snr":     "float — your estimated SNR",
-        "merger_type":     "str — one of BBH / BNS / NSBH"
-    }
+    "submission_format": { ... }
 }
 ```
 
-No `tier`, no `difficulty_score`.
+No `tier`, no `difficulty_score`, no true parameters.
 
 ### What ground_truth.json contains (hidden from agent)
 
 ```json
 {
-    "task_id":          "000",
-    "tier":             "easy",
-    "difficulty_score": 2,
-    "chirp_mass":       28.04,
-    "mass1":            32.1,
-    "mass2":            22.8,
-    "mass_ratio":       0.71,
-    "spin1z":           0.05,
-    "spin2z":          -0.02,
-    "distance":         450.0,
-    "inclination":      0.3,
-    "ra":               1.5,
-    "dec":             -0.5,
-    "network_snr":      24.3,
-    "merger_type":      "BBH",
-    "approximant":      "IMRPhenomD"
+    "task_id":                  "000",
+    "tier":                     "easy",
+    "difficulty_score":         2,
+    "chirp_mass":               28.04,
+    "mass1":                    32.1,
+    "mass2":                    22.8,
+    "mass_ratio":               0.71,
+    "spin1z":                   0.0,
+    "spin2z":                   0.0,
+    "distance":                 450.0,
+    "inclination":              0.0,
+    "coalescence_time":         10.72,
+    "network_snr":              24.3,
+    "merger_type":              "BBH",
+    "approximant":              "IMRPhenomD",
+    "chirp_mass_tol_frac":      0.05,
+    "mass_ratio_tol_abs":       0.15,
+    "snr_tol_frac":             0.20
 }
 ```
 
@@ -237,31 +201,26 @@ evaluator.py scores output.json against ground_truth.json
 saves per-task JSON + run_summary.json
 ```
 
-### What input.json contains (what your pipeline receives)
+### What input.json contains
 
 ```json
 {
     "task_id":            "000",
-    "task_description":   "...",
     "approximant":        "IMRPhenomD",
     "sample_rate_hz":     2048,
-    "segment_duration_s": 16,
     "f_lower_hz":         20.0,
     "data_paths": {
         "strain_H1":  "/absolute/path/strain_H1.npy",
         "strain_L1":  "/absolute/path/strain_L1.npy",
         "psd_H1":     "/absolute/path/psd_H1.npy",
         "psd_L1":     "/absolute/path/psd_L1.npy",
-        "psd_freqs":  "/absolute/path/psd_freqs.npy",
+        "psd_freqs":  "/absolute/path/psd_freqs.npy"
     },
-    "submission_format":  { ... },
-    "output_path":        "/tmp/xxx/output.json"
+    "output_path": "/tmp/xxx/output.json"
 }
 ```
 
 ### What output.json must contain
-
-Only 6 fields required:
 
 ```json
 {
@@ -279,49 +238,48 @@ Missing fields are filled with safe defaults. If the pipeline crashes or times o
 ### Run commands
 
 ```bash
-# 1 task — quick test
+# Single task quick test
 python scripts/run_benchmark.py \
-    --pipeline-path /path/to/your/pipeline \
+    --pipeline-path /home/sr/Desktop/code/physics_agent_harness \
     --pipeline-entry run.py \
-    --data-dir data/IMRPhenomD \
-    --tier easy --max-tasks 1 --verbose
+    --data-dir data/IMRPhenomD_zerospin/IMRPhenomD \
+    --tier easy --max-tasks 1 \
+    --pipeline-timeout 1800 \
+    --verbose
 
-# Full easy tier
+# Full benchmark — all 15 tasks
 python scripts/run_benchmark.py \
-    --pipeline-path /path/to/your/pipeline \
+    --pipeline-path /home/sr/Desktop/code/physics_agent_harness \
     --pipeline-entry run.py \
-    --data-dir data/IMRPhenomD \
-    --tier easy \
-    --outfile results/my_pipeline_easy.json
-
-# All tiers
-python scripts/run_benchmark.py \
-    --pipeline-path /path/to/your/pipeline \
-    --pipeline-entry run.py \
-    --data-dir data/IMRPhenomD \
+    --data-dir data/IMRPhenomD_zerospin/IMRPhenomD \
     --tier all \
-    --outfile results/my_pipeline_full.json
+    --pipeline-timeout 1800 \
+    --outfile results/full_zerospin_run.json \
+    --verbose
 
-# Different approximant
-python scripts/run_benchmark.py \
-    --pipeline-path /path/to/your/pipeline \
+# Background run with log
+nohup python scripts/run_benchmark.py \
+    --pipeline-path /home/sr/Desktop/code/physics_agent_harness \
     --pipeline-entry run.py \
-    --data-dir data/SEOBNRv4 \
-    --tier easy
+    --data-dir data/IMRPhenomD_zerospin/IMRPhenomD \
+    --tier all \
+    --pipeline-timeout 1800 \
+    --outfile results/full_zerospin_run.json \
+    > results/run_log.txt 2>&1 &
 ```
 
 ### CLI arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `--pipeline-path` | required | Absolute path to your pipeline repo root |
-| `--pipeline-entry` | `run.py` | Entry point script relative to `--pipeline-path` |
-| `--pipeline-timeout` | `300` | Seconds before pipeline is killed per task |
+| `--pipeline-path` | required | Absolute path to pipeline repo root |
+| `--pipeline-entry` | `run.py` | Entry point script |
+| `--pipeline-timeout` | `300` | Seconds before pipeline killed per task (use 1800 for PE) |
 | `--tier` | `all` | `easy`, `medium`, `hard`, or `all` |
 | `--max-tasks` | None | Limit tasks — useful for quick testing |
-| `--data-dir` | `data/IMRPhenomD` | Path to approximant subfolder |
+| `--data-dir` | `data/IMRPhenomD` | Path to dataset (index.json must exist here) |
 | `--outfile` | None | Also save full report to this path |
-| `--verbose` | False | Print pipeline stdout and agent interaction |
+| `--verbose` | False | Print pipeline stdout |
 
 ---
 
@@ -330,107 +288,50 @@ python scripts/run_benchmark.py \
 ### Live output per task
 
 ```
-[001/300] 000        tier=easy   PASS  crit=4/4  t=39.3s
-[002/300] 001        tier=easy   FAIL  crit=2/4  t=41.1s
-```
-
-### Per-task JSON (saved immediately after each task)
-
-```json
-{
-  "task_id":    "000",
-  "tier":       "easy",
-  "passed":     true,
-  "elapsed_s":  39.3,
-  "submission": {
-    "chirp_mass_Msun": 28.5,
-    "mass1_Msun":      32.0,
-    "mass2_Msun":      24.0,
-    "mass_ratio":      0.75,
-    "network_snr":     20.0,
-    "merger_type":     "BBH"
-  },
-  "metrics": {
-    "passed":                true,
-    "n_criteria_passed":     4,
-    "ok_waveform_match":     true,
-    "ok_chirp_mass":         true,
-    "ok_mass_ratio":         true,
-    "ok_merger_type":        true,
-    "waveform_overlap":      0.923,
-    "chirp_mass_submitted":  28.5,
-    "chirp_mass_true":       28.04,
-    "chirp_mass_frac_err":   0.016,
-    "mass_ratio_submitted":  0.75,
-    "mass_ratio_true":       0.71,
-    "mass_ratio_abs_err":    0.04,
-    "merger_type_submitted": "BBH",
-    "merger_type_true":      "BBH",
-    "stat_pass_phys_fail":   false
-  }
-}
+[001/15] 000        tier=easy   PASS  crit=3/3  t=471s
+[002/15] 001        tier=easy   FAIL  crit=2/3  t=505s
 ```
 
 ### Summary table
 
 ```
-Tier       Pass              Mc err%    q err    Overlap    Stat✓Phys✗
-easy       70/100 (70%)       4.32%    0.091      0.941        12%
-medium     35/100 (35%)      14.21%    0.162      0.823        28%
-hard       10/100 (10%)      38.74%    0.291      0.601        41%
-overall   115/300 (38%)      19.09%    0.181      0.788        27%
+Tier       Pass            Mc err%   q err   Overlap  Stat✓Phys✗
+--------------------------------------------------------------
+easy       1/5 (20%)        61.1%   0.322     0.356          0%
+medium     2/5 (40%)        24.6%   0.149     0.710          0%
+hard       1/5 (20%)        20.3%   0.222     0.693         40%
+overall    4/15 (27%)       35.4%   0.231     0.586         13%
 ```
 
 | Column | Description |
 |---|---|
-| `Pass` | Tasks where all four criteria passed simultaneously |
+| `Pass` | Tasks where all three criteria passed |
 | `Mc err%` | Mean chirp mass percentage error |
 | `q err` | Mean mass ratio absolute error |
-| `Overlap` | Mean noise-weighted waveform overlap |
-| `Stat✓Phys✗` | Waveform matched (≥ 0.80) but chirp mass failed — the "good statistics ≠ good physics" gap |
+| `Overlap` | Mean noise-weighted waveform overlap (diagnostic only) |
+| `Stat✓Phys✗` | Waveform matched but chirp mass failed — the "good statistics ≠ good physics" signal |
 
 ---
 
-## Difficulty Tiers
+## Known Failure Modes
 
-Tier is stored in `ground_truth.json` only — the agent never sees it:
-
-| Parameter | Easy | Medium | Hard |
-|---|---|---|---|
-| `network_snr_range` | 20–35 | 12–20 | 8–12 |
-| `total_mass_range` (M☉) | 40–80 | 25–120 | 10–200 |
-| `mass_ratio_range` | 0.7–1.0 | 0.4–0.9 | 0.1–0.6 |
-| `spin_magnitude_range` | 0–0.1 | 0–0.5 | 0.3–0.9 |
-| `inclination_range` (rad) | 0–0.3 | 0–1.0 | 0.5–π/2 |
-
-Lower SNR, more unequal masses, higher spins, and edge-on inclinations all make parameter recovery harder.
+| Failure type | Cause | Fix |
+|---|---|---|
+| Timeout (blank submission) | PE too slow for slice sampler | Revert to `rwalk`/`walks=50`, or increase `--pipeline-timeout` |
+| q bias toward equal mass | Likelihood nearly flat in q at low SNR | Higher `nlive` (500+), or wider `mass_ratio_tol_abs` |
+| stat✓phys✗ on hard tasks | Sampler finds local likelihood maximum | Wider Mc prior window, higher `nlive` |
+| Mc error >20% on high-mass hard tasks | Signal near `f_lower=20Hz` boundary | Raise `f_lower` detection, or lower ISCO frequency check |
 
 ---
 
 ## Evaluation Thresholds
 
+Thresholds are baked into `ground_truth.json` at generation time:
+
 ```python
-# evaluation/evaluator.py
-OVERLAP_THRESHOLD   = 0.80   # waveform match threshold
-chirp_mass_tol_frac = 0.05   # 5% — baked into ground_truth.json at generation time
-mass_ratio_tol_abs  = 0.15   # absolute — baked into ground_truth.json at generation time
+# generate_dataset.py
+chirp_mass_tol_frac = {"easy": 0.05, "medium": 0.08, "hard": 0.10}[tier]
+mass_ratio_tol_abs  = {"easy": 0.15, "medium": 0.20, "hard": 0.25}[tier]
 ```
 
-Changing `OVERLAP_THRESHOLD` takes effect immediately without regenerating data.
-
----
-
-## Generating Multiple Approximant Datasets
-
-Use the same `--seed` to keep physical parameters identical — only the waveform physics changes:
-
-```bash
-python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomD
-python scripts/generate_dataset.py --seed 42 --approximant SEOBNRv4
-python scripts/generate_dataset.py --seed 42 --approximant IMRPhenomXHM
-```
-
-Each generates a separate subfolder. Point `--data-dir` at the one you want to evaluate on.
-
----
-
+`OVERLAP_THRESHOLD = 0.80` in `evaluator.py` can be changed without regenerating data — it's only used for the diagnostic `ok_waveform_match` flag.

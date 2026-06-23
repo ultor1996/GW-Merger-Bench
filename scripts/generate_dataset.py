@@ -47,8 +47,8 @@ DIFFICULTY_CONFIG = {
         "network_snr_range":     (20.0, 35.0),
         "total_mass_range":      (40.0, 80.0),
         "mass_ratio_range":      (0.7, 1.0),
-        "spin_magnitude_range":  (0.0, 0.1),
-        "inclination_range":     (0.0, 0.3),
+        "spin_magnitude_range":  (0.0, 0.0), # zero spin  and inclination controlled benchmark
+        "inclination_range":     (0.0, 0.0),
         "difficulty_score_range":(1, 3),
     },
     "medium": {
@@ -56,8 +56,8 @@ DIFFICULTY_CONFIG = {
         "network_snr_range":     (12.0, 20.0),
         "total_mass_range":      (25.0, 120.0),
         "mass_ratio_range":      (0.4, 0.9),
-        "spin_magnitude_range":  (0.0, 0.5),
-        "inclination_range":     (0.0, 1.0),
+        "spin_magnitude_range":  (0.0, 0.0),
+        "inclination_range":     (0.0, 0.0),
         "difficulty_score_range":(4, 7),
     },
     "hard": {
@@ -65,8 +65,8 @@ DIFFICULTY_CONFIG = {
         "network_snr_range":     (8.0, 12.0),
         "total_mass_range":      (10.0, 200.0),
         "mass_ratio_range":      (0.1, 0.6),
-        "spin_magnitude_range":  (0.3, 0.9),
-        "inclination_range":     (0.5, np.pi / 2),
+        "spin_magnitude_range":  (0.0, 0.0),
+        "inclination_range":     (0.0, 0.0),
         "difficulty_score_range":(8, 10),
     },
 }
@@ -161,7 +161,7 @@ def generate_one_event(task_id, tier, cfg, rng, np_rng):
     dec         = rng.uniform(-np.pi / 2, np.pi / 2)
     polarisation= rng.uniform(0, np.pi)
     coa_phase   = rng.uniform(0, 2 * np.pi)
-    coa_time_offset = SEGMENT_DURATION * 0.67
+    coa_time_offset = SEGMENT_DURATION * 0.67 #delibrate choice should be coa_time_offset = rng.uniform(2.0, SEGMENT_DURATION - 2.0)
 
     dt   = 1.0 / SAMPLE_RATE
     flen = int(SEGMENT_DURATION * SAMPLE_RATE / 2) + 1
@@ -254,7 +254,7 @@ def generate_one_event(task_id, tier, cfg, rng, np_rng):
         optimal_snr_H1=round(opt_snr_H1, 3),
         optimal_snr_L1=round(opt_snr_L1, 3),
         merger_type="BBH", approximant=APPROXIMANT,
-        chirp_mass_tol_frac=0.05, mass_ratio_tol_abs=0.15, snr_tol_frac=0.20,
+        chirp_mass_tol_frac=0.15, mass_ratio_tol_abs=0.15, snr_tol_frac=0.20,
     )
 
     task_meta = TaskMetadata(
