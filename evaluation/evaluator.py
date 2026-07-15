@@ -28,139 +28,74 @@ except ImportError:
 
 @dataclass
 class EvaluationResult:
-    ok_waveform_match: bool
-    ok_chirp_mass:     bool
-    ok_mass_ratio:     bool
-    ok_merger_type:    bool
-    passed:            bool
-
-    waveform_overlap:           float
-    waveform_overlap_threshold: float
+    ok_chirp_mass:        bool
+    ok_coalescence_time:  bool
+    passed:               bool
 
     chirp_mass_submitted: float
     chirp_mass_true:      float
     chirp_mass_frac_err:  float
 
-    mass_ratio_submitted: float
-    mass_ratio_true:      float
-    mass_ratio_abs_err:   float
-
-    merger_type_submitted: str
-    merger_type_true:      str
+    coalescence_time_submitted: float
+    coalescence_time_true:      float
+    coalescence_time_abs_err:   float
 
     n_criteria_passed: int
-    n_criteria_total:  int = 4
-
-    anchor_chirp_mass_from_freq_evo: float = 0.0
-    anchor_peak_freq_hz:             float = 0.0
-    stat_pass_phys_fail:             bool  = False
+    n_criteria_total:  int = 2
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
-
 
 class GWEvaluator:
     """
     Evaluates agent submissions against ground truth.
 
-    The agent only submits recoverable parameters:
-      chirp_mass_Msun, mass1_Msun, mass2_Msun, mass_ratio,
-      network_snr, merger_type
-
-    For ok_waveform_match the evaluator uses submitted masses but
-    TRUE extrinsic parameters (distance, sky location, inclination,
-    spins) since these cannot be recovered from single-detector
-    matched filtering.
+    The agent submits: chirp_mass_Msun, coalescence_time_s
+    Sky location (ra, dec, polarisation) is GIVEN to the agent in
+    task.json's given_parameters, not estimated -- so it is not scored.
     """
 
     def __init__(self, ground_truth: Dict[str, Any], task_dir: str = None):
         self.gt       = ground_truth
         self.task_dir = task_dir
 
-        self.true_chirp_mass  = ground_truth["chirp_mass"]
-        self.true_mass_ratio  = ground_truth["mass_ratio"]
-        self.true_merger_type = ground_truth["merger_type"]
-        self.true_mass1       = ground_truth["mass1"]
-        self.true_mass2       = ground_truth["mass2"]
+        self.true_chirp_mass     = ground_truth["chirp_mass"]
+        self.true_coa_time       = ground_truth["coalescence_time"]
 
-        # True extrinsic params — used by evaluator for waveform overlap
-        self.true_coa_time    = ground_truth["coalescence_time"]
-        self.true_polarisation= ground_truth["polarisation"]
-        self.true_distance    = ground_truth["distance"]
-        self.true_inclination = ground_truth["inclination"]
-        self.true_ra          = ground_truth["ra"]
-        self.true_dec         = ground_truth["dec"]
-        self.true_spin1z      = ground_truth["spin1z"]
-        self.true_spin2z      = ground_truth["spin2z"]
-
-        self.approximant      = ground_truth.get("approximant", APPROXIMANT)
-        self.anchor_chirp_mass= ground_truth["chirp_mass_from_freq_evo"]
-        self.anchor_peak_freq = ground_truth["peak_frequency_hz"]
-        self.chirp_mass_tol   = ground_truth["chirp_mass_tol_frac"]
-        self.mass_ratio_tol   = ground_truth["mass_ratio_tol_abs"]
-
-        self._strain_H1 = None
-        self._psd_H1    = None
-        self._psd_freqs = None
+        self.chirp_mass_tol      = ground_truth["chirp_mass_tol_frac"]
+        self.coalescence_time_tol = ground_truth.get("coalescence_time_tol_s", 0.05)
 
     def evaluate(self, submission: Dict[str, Any]) -> EvaluationResult:
-        sub_chirp_mass  = float(submission.get("chirp_mass_Msun", -1.0))
-        sub_mass_ratio  = float(submission.get("mass_ratio", -1.0))
-        sub_mass1       = float(submission.get("mass1_Msun", 0.0))
-        sub_mass2       = float(submission.get("mass2_Msun", 0.0))
-        sub_merger_type = str(submission.get("merger_type", "")).strip().upper()
+        sub_chirp_mass = float(submission.get("chirp_mass_Msun", -1.0))
+        sub_coa_time   = float(submission.get("coalescence_time_s", -1.0))
 
-        # Derive masses from chirp mass if not provided
-        if sub_mass1 <= 0 or sub_mass2 <= 0:
-            sub_mass1, sub_mass2 = self._masses_from_chirp(sub_chirp_mass, sub_mass_ratio)
-
-        # ---- Criterion 1: Waveform match ----
-        # Uses submitted masses but TRUE extrinsic params
-        overlap, ok_waveform = self._compute_waveform_overlap(
-            mass1=sub_mass1,
-            mass2=sub_mass2,
-        )
-
-        # ---- Criterion 2: Chirp mass ----
+        # ---- Criterion 1: Chirp mass ----
         if sub_chirp_mass > 0:
             cm_frac_err = abs(sub_chirp_mass - self.true_chirp_mass) / self.true_chirp_mass
         else:
             cm_frac_err = 1.0
         ok_chirp_mass = cm_frac_err <= self.chirp_mass_tol
 
-        # ---- Criterion 3: Mass ratio ----
-        sub_mass_ratio_clipped = max(min(sub_mass_ratio, 1.0), 0.0)
-        mr_abs_err  = abs(sub_mass_ratio_clipped - self.true_mass_ratio)
-        ok_mass_ratio = mr_abs_err <= self.mass_ratio_tol
-
-        # ---- Criterion 4: Merger type ----
-        ok_merger_type = self._check_merger_type(sub_merger_type, sub_mass1, sub_mass2)
+        # ---- Criterion 2: Coalescence time ----
+        ct_abs_err = abs(sub_coa_time - self.true_coa_time)
+        ok_coalescence_time = ct_abs_err <= self.coalescence_time_tol
 
         # ---- Conjunction gate ----
-        n_passed = sum([ok_chirp_mass, ok_mass_ratio, ok_merger_type])
-        passed   = ok_chirp_mass and ok_mass_ratio and ok_merger_type
+        n_passed = sum([ok_chirp_mass, ok_coalescence_time])
+        passed   = ok_chirp_mass and ok_coalescence_time
 
         return EvaluationResult(
-            ok_waveform_match=ok_waveform,
             ok_chirp_mass=ok_chirp_mass,
-            ok_mass_ratio=ok_mass_ratio,
-            ok_merger_type=ok_merger_type,
+            ok_coalescence_time=ok_coalescence_time,
             passed=passed,
-            waveform_overlap=round(float(overlap), 4),
-            waveform_overlap_threshold=OVERLAP_THRESHOLD,
             chirp_mass_submitted=sub_chirp_mass,
             chirp_mass_true=self.true_chirp_mass,
             chirp_mass_frac_err=cm_frac_err,
-            mass_ratio_submitted=sub_mass_ratio,
-            mass_ratio_true=self.true_mass_ratio,
-            mass_ratio_abs_err=mr_abs_err,
-            merger_type_submitted=sub_merger_type,
-            merger_type_true=self.true_merger_type,
+            coalescence_time_submitted=sub_coa_time,
+            coalescence_time_true=self.true_coa_time,
+            coalescence_time_abs_err=ct_abs_err,
             n_criteria_passed=n_passed,
-            n_criteria_total=3,
-            anchor_chirp_mass_from_freq_evo=self.anchor_chirp_mass,
-            anchor_peak_freq_hz=self.anchor_peak_freq,
-            stat_pass_phys_fail=ok_waveform and not ok_chirp_mass,
+            n_criteria_total=2,
         )
 
     def _compute_waveform_overlap(self, mass1: float, mass2: float) -> tuple:

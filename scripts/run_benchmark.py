@@ -23,17 +23,12 @@ from evaluation.evaluator import GWEvaluator
 
 
 BLANK_SUBMISSION = {
-    "chirp_mass_Msun": 0.0,
-    "mass1_Msun":      0.0,
-    "mass2_Msun":      0.0,
-    "mass_ratio":      0.5,
-    "network_snr":     0.0,
-    "merger_type":     "BBH",
+    "chirp_mass_Msun":    0.0,
+    "coalescence_time_s": 0.0,
 }
 
 REQUIRED_KEYS = {
-    "chirp_mass_Msun", "mass1_Msun", "mass2_Msun",
-    "mass_ratio", "network_snr", "merger_type",
+    "chirp_mass_Msun", "coalescence_time_s",
 }
 
 
@@ -115,12 +110,8 @@ def _parse_output(output_path: str) -> dict:
 
     try:
         return {
-            "chirp_mass_Msun": float(output["chirp_mass_Msun"]),
-            "mass1_Msun":      float(output["mass1_Msun"]),
-            "mass2_Msun":      float(output["mass2_Msun"]),
-            "mass_ratio":      float(output["mass_ratio"]),
-            "network_snr":     float(output["network_snr"]),
-            "merger_type":     str(output["merger_type"]).strip().upper(),
+            "chirp_mass_Msun":    float(output["chirp_mass_Msun"]),
+            "coalescence_time_s": float(output["coalescence_time_s"]),
         }
     except (ValueError, TypeError) as e:
         print(f"  [pipeline] WARNING: type error {e} — blank submission")
@@ -253,33 +244,26 @@ def _tier_stats(rs: list) -> dict:
     n        = len(rs)
     n_passed = sum(r["passed"] for r in rs)
     cms      = [r["metrics"].get("chirp_mass_frac_err", 1.0) for r in rs if r.get("metrics")]
-    mrs      = [r["metrics"].get("mass_ratio_abs_err",  1.0) for r in rs if r.get("metrics")]
-    overlaps = [r["metrics"].get("waveform_overlap",    0.0) for r in rs if r.get("metrics")]
-    spf      = [r["metrics"].get("stat_pass_phys_fail", False) for r in rs if r.get("metrics")]
+    cts      = [r["metrics"].get("coalescence_time_abs_err", 1.0) for r in rs if r.get("metrics")]
     return {
-        "n_tasks":                  n,
-        "n_passed":                 n_passed,
-        "pass_rate":                round(n_passed / max(n, 1), 3),
-        "mean_chirp_mass_pct_err":  round(sum(cms) / len(cms) * 100, 2) if cms else None,
-        "mean_mass_ratio_abs_err":  round(sum(mrs) / len(mrs), 4)       if mrs else None,
-        "mean_waveform_overlap":    round(sum(overlaps) / len(overlaps), 4) if overlaps else None,
-        "stat_pass_phys_fail_rate": round(sum(spf) / len(spf), 3)       if spf else None,
+        "n_tasks":                    n,
+        "n_passed":                   n_passed,
+        "pass_rate":                  round(n_passed / max(n, 1), 3),
+        "mean_chirp_mass_pct_err":    round(sum(cms) / len(cms) * 100, 2) if cms else None,
+        "mean_coalescence_time_err":  round(sum(cts) / len(cts), 4)       if cts else None,
     }
 
-
 def _print_summary(stats: dict):
-    print(f"\n{'Tier':<10} {'Pass':<14} {'Mc err%':>8}  {'q err':>6}  {'Overlap':>8}  {'Stat✓Phys✗':>10}")
-    print("-" * 62)
+    print(f"\n{'Tier':<10} {'Pass':<14} {'Mc err%':>8}  {'t_c err(s)':>10}")
+    print("-" * 46)
     for tier in ["easy", "medium", "hard", "overall"]:
         if tier not in stats:
             continue
         s   = stats[tier]
         ps  = f"{s['n_passed']}/{s['n_tasks']} ({s['pass_rate']*100:.0f}%)"
-        cm  = f"{s['mean_chirp_mass_pct_err']}%"  if s['mean_chirp_mass_pct_err']  is not None else "n/a"
-        mr  = f"{s['mean_mass_ratio_abs_err']}"    if s['mean_mass_ratio_abs_err']  is not None else "n/a"
-        ov  = f"{s['mean_waveform_overlap']}"       if s['mean_waveform_overlap']    is not None else "n/a"
-        spf = f"{s['stat_pass_phys_fail_rate']*100:.0f}%" if s['stat_pass_phys_fail_rate'] is not None else "n/a"
-        print(f"{tier:<10} {ps:<14} {cm:>8}  {mr:>6}  {ov:>8}  {spf:>10}")
+        cm  = f"{s['mean_chirp_mass_pct_err']}%" if s['mean_chirp_mass_pct_err'] is not None else "n/a"
+        tc  = f"{s['mean_coalescence_time_err']}" if s['mean_coalescence_time_err'] is not None else "n/a"
+        print(f"{tier:<10} {ps:<14} {cm:>8}  {tc:>10}")
 
 
 def main():
