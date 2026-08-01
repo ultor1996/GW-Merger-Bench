@@ -109,39 +109,26 @@ def _parse_output(output_path: str) -> dict:
             output[key] = BLANK_SUBMISSION[key]
 
     try:
-        return {
-            "chirp_mass_Msun":    float(output["chirp_mass_Msun"]),
-            "coalescence_time_s": float(output["coalescence_time_s"]),
-        }
+        result = dict(output)  # keep everything, not just 2 keys
+        result["chirp_mass_Msun"] = float(output["chirp_mass_Msun"])
+        result["coalescence_time_s"] = float(output["coalescence_time_s"])
+        return result
     except (ValueError, TypeError) as e:
         print(f"  [pipeline] WARNING: type error {e} — blank submission")
         return BLANK_SUBMISSION.copy()
 
 
-def load_tasks(data_dir: str, tiers: list, max_tasks: int = None) -> list:
-    index_path = os.path.join(data_dir, "index.json")
-    if not os.path.exists(index_path):
-        raise FileNotFoundError(
-            f"No index.json in {data_dir}. Run generate_dataset.py first."
-        )
-    with open(index_path) as f:
-        index = json.load(f)
-
-    tasks = [t for t in index["tasks"] if t["tier"] in tiers]
-    if max_tasks:
-        tasks = tasks[:max_tasks]
-    return tasks
-
-
 def run_benchmark(args):
     tiers = ["easy", "medium", "hard"] if args.tier == "all" else [args.tier]
-    tasks = load_tasks(args.data_dir, tiers, args.max_tasks)
+    tasks = load_tasks(args.data_dir, tiers, args.max_tasks, args.task_id, args.start_from_task_id)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    tier_str  = "all" if len(tiers) > 1 else tiers[0]
-    run_dir   = os.path.join("results", f"{tier_str}_{timestamp}")
+    if args.run_dir:
+        run_dir = args.run_dir
+    else:
+        tier_str  = "all" if len(tiers) > 1 else tiers[0]
+        run_dir   = os.path.join("results", f"{tier_str}_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
-
     print(f"\n{'='*60}")
     print(f"  GW Merger Bench")
     print(f"  Pipeline : {args.pipeline_entry}")
@@ -199,6 +186,16 @@ def run_benchmark(args):
         with open(os.path.join(run_dir, f"{task_id}.json"), "w") as f:
             json.dump(task_result, f, indent=2)
 
+    # Merge in any pre-existing per-task JSONs already in run_dir (e.g. from
+    # an earlier invocation before an interruption), so stats cover everything
+    seen_task_ids = {r["task_id"] for r in task_results}
+    for fname in os.listdir(run_dir):
+        if fname.endswith(".json") and fname != "run_summary.json":
+            tid = fname[:-5]
+            if tid not in seen_task_ids:
+                with open(os.path.join(run_dir, fname)) as f:
+                    task_results.append(json.load(f))
+
     stats = _aggregate(task_results)
     _print_summary(stats)
 
@@ -239,6 +236,32 @@ def _aggregate(task_results: list) -> dict:
     stats["overall"] = _tier_stats(task_results)
     return stats
 
+def load_tasks(data_dir: str, tiers: list, max_tasks: int = None, task_id: str = None,
+                start_from_task_id: str = None) -> list:
+    index_path = os.path.join(data_dir, "index.json")
+    if not os.path.exists(index_path):
+        raise FileNotFoundError(
+            f"No index.json in {data_dir}. Run generate_dataset.py first."
+        )
+    with open(index_path) as f:
+        index = json.load(f)
+
+    tasks = [t for t in index["tasks"] if t["tier"] in tiers]
+
+    if task_id:
+        tasks = [t for t in tasks if t["task_id"] == task_id]
+        if not tasks:
+            raise ValueError(f"task_id '{task_id}' not found in tier(s) {tiers}")
+        return tasks
+
+    if start_from_task_id:
+        tasks = [t for t in tasks if t["task_id"] >= start_from_task_id]
+        if not tasks:
+            raise ValueError(f"No tasks with task_id >= '{start_from_task_id}' in tier(s) {tiers}")
+
+    if max_tasks:
+        tasks = tasks[:max_tasks]
+    return tasks
 
 def _tier_stats(rs: list) -> dict:
     n        = len(rs)
@@ -277,6 +300,12 @@ def main():
     p.add_argument("--tier",    default="all",
                    choices=["easy", "medium", "hard", "all"])
     p.add_argument("--max-tasks", type=int, default=None)
+    p.add_argument("--task-id",   default=None, help="Run only this specific task_id (e.g. '003')")
+    p.add_argument("--start-from-task-id", default=None,
+                   help="Skip tasks before this task_id; run it through the end of the selected tier(s)")
+    p.add_argument("--run-dir", default=None,
+                   help="Reuse this exact results folder instead of creating a new timestamped one -- "
+                        "pass the same value across resumed invocations so everything lands together")
     p.add_argument("--data-dir",  default="data/IMRPhenomD")
     p.add_argument("--outfile",   default=None)
     p.add_argument("--verbose",   action="store_true")
